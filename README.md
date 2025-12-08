@@ -339,8 +339,6 @@ Paper2Slides/
 
 ---
 
----
-
 <div align="center">
 
 **🌟Found Paper2Slides helpful? Star us on GitHub!**
