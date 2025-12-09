@@ -9,11 +9,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, List
 from dotenv import load_dotenv
-from ..utils.api_utils import load_env_api_key, get_api_base_url
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)
+
+# Late import to avoid circular dependency
+def _get_api_defaults():
+    from ..utils.api_utils import load_env_api_key, get_api_base_url
+    return load_env_api_key, get_api_base_url
 
 DEFAULT_STORAGE_DIR = PROJECT_ROOT / "rag" / "storage"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "rag" / "output"
@@ -28,12 +32,12 @@ class APIConfig:
     """
     
     llm_api_key: str = field(
-        default_factory=load_env_api_key
+        default_factory=lambda: _get_api_defaults()[0]()
     )
     """Required. Set via GEMINI_TEXT_KEY, RUNWAY_API_KEY, OPENAI_API_KEY or RAG_LLM_API_KEY."""
     
     llm_base_url: Optional[str] = field(
-        default_factory=get_api_base_url
+        default_factory=lambda: _get_api_defaults()[1]()
     )
     """Optional. If None, uses OpenAI official API. Set via OPENAI_BASE_URL etc."""
     
