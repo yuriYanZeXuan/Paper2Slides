@@ -32,12 +32,12 @@ class APIConfig:
     """
     
     llm_api_key: str = field(
-        default_factory=lambda: _get_api_defaults()[0]()
+        default_factory=load_env_api_key
     )
     """Required. Set via GEMINI_TEXT_KEY, RUNWAY_API_KEY, OPENAI_API_KEY or RAG_LLM_API_KEY."""
     
     llm_base_url: Optional[str] = field(
-        default_factory=lambda: _get_api_defaults()[1]()
+        default_factory=get_api_base_url
     )
     """Optional. If None, uses OpenAI official API. Set via OPENAI_BASE_URL etc."""
     

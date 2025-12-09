@@ -399,12 +399,19 @@ class ImageGenerator:
             # Internal/Runway/Nano Banana proxy
             # Remove /chat/completions suffix if present to find base
             base = self.base_url.split("/chat/completions")[0].rstrip("/")
-            # If base already has /openai/google/v1, use it, otherwise append
-            if "/openai/google/v1" in base:
+            
+            # CASE 1: User provided full path to /openai/google/v1 (Recommended)
+            if base.endswith("/google/v1"):
                  endpoint = f"{base}:generateContent"
+            
+            # CASE 2: User provided base path like .../openai
+            elif base.endswith("/openai"):
+                 endpoint = f"{base}/google/v1:generateContent"
+            
+            # CASE 3: Fallback/Other
             else:
-                 # Fallback to hardcoded internal endpoint structure if base_url is generic
-                 endpoint = "https://runway.devops.rednote.life/openai/google/v1:generateContent"
+                 # If base url is generic, try to append standard path
+                 endpoint = f"{base}/google/v1:generateContent"
             
             headers = {
                 "api-key": self.api_key,
@@ -470,7 +477,13 @@ class ImageGenerator:
         
         # Parse response to find image
         if result and "candidates" in result and result["candidates"]:
-            candidate_parts = result["candidates"][0].get("content", {}).get("parts", [])
+            candidate = result["candidates"][0]
+            # Check finishReason
+            finish_reason = candidate.get("finishReason")
+            if finish_reason and finish_reason != "STOP":
+                 print(f"Warning: Gemini finishReason is {finish_reason}. Full candidate: {candidate}")
+            
+            candidate_parts = candidate.get("content", {}).get("parts", [])
             for part in candidate_parts:
                 inline_data = part.get("inlineData")
                 if inline_data:
@@ -479,7 +492,13 @@ class ImageGenerator:
                     if b64_data:
                         return base64.b64decode(b64_data), mime_type
         
-        raise RuntimeError(f"No image data in Gemini native response: {json.dumps(result)[:200]}...")
+        # If we got here, something is wrong with the response content
+        error_msg = f"No image data in Gemini native response. "
+        if "error" in result:
+             error_msg += f"API Error: {result['error']}"
+        else:
+             error_msg += f"Full response: {json.dumps(result)[:500]}"
+        raise RuntimeError(error_msg)
 
 
 def save_images_as_pdf(images: List[GeneratedImage], output_path: str):
