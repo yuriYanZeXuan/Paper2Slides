@@ -92,12 +92,17 @@ class ImageGenerator:
     ):
         from ..utils.api_utils import load_env_api_key, get_api_base_url, get_openai_client
         
-        self.api_key = api_key or os.getenv("IMAGE_GEN_API_KEY") or load_env_api_key()
+        # Load keys specifically for "image" usage
+        self.api_key = api_key or load_env_api_key("image")
+        
         # Default to OpenRouter if no other base URL is provided, as originally configured
-        # But if standard env vars are present, they will take precedence via get_api_base_url()
-        self.base_url = base_url or os.getenv("IMAGE_GEN_BASE_URL") or get_api_base_url() or "https://openrouter.ai/api/v1"
+        # But if standard env vars are present, they will take precedence via get_api_base_url("image")
+        env_base_url = get_api_base_url("image")
+        self.base_url = base_url or env_base_url or "https://openrouter.ai/api/v1"
         self.model = model
-        self.client = get_openai_client(api_key=self.api_key, base_url=self.base_url)
+        
+        # Use key_type="image" to ensure correct logging/client selection
+        self.client = get_openai_client(api_key=self.api_key, base_url=self.base_url, key_type="image")
     
     def generate(
         self,
