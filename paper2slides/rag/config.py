@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, List
 from dotenv import load_dotenv
+from ..utils.api_utils import load_env_api_key, get_api_base_url
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
@@ -27,14 +28,14 @@ class APIConfig:
     """
     
     llm_api_key: str = field(
-        default_factory=lambda: os.getenv("RAG_LLM_API_KEY", "")
+        default_factory=load_env_api_key
     )
-    """Required. Set via RAG_LLM_API_KEY env var or pass explicitly."""
+    """Required. Set via GEMINI_TEXT_KEY, RUNWAY_API_KEY, OPENAI_API_KEY or RAG_LLM_API_KEY."""
     
     llm_base_url: Optional[str] = field(
-        default_factory=lambda: os.getenv("RAG_LLM_BASE_URL", None)
+        default_factory=get_api_base_url
     )
-    """Optional. If None, uses OpenAI official API. Set via RAG_LLM_BASE_URL env var."""
+    """Optional. If None, uses OpenAI official API. Set via OPENAI_BASE_URL etc."""
     
     llm_model: str = field(
         default_factory=lambda: os.getenv("LLM_MODEL", "gpt-4o-mini")

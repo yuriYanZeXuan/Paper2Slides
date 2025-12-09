@@ -118,14 +118,13 @@ class ContentPlanner:
         model: str = "gpt-4o",
     ):
         import os
-        self.api_key = api_key or os.getenv("RAG_LLM_API_KEY", "")
-        self.base_url = base_url or os.getenv("RAG_LLM_BASE_URL")
+        from ..utils.api_utils import load_env_api_key, get_api_base_url, get_openai_client
+        
+        self.api_key = api_key or load_env_api_key()
+        self.base_url = base_url or get_api_base_url()
         self.model = model
         
-        kwargs = {"api_key": self.api_key}
-        if self.base_url:
-            kwargs["base_url"] = self.base_url
-        self.client = OpenAI(**kwargs)
+        self.client = get_openai_client(api_key=self.api_key, base_url=self.base_url)
     
     def plan(self, gen_input: GenerationInput) -> ContentPlan:
         """Create a content plan from generation input."""

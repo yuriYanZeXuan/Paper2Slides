@@ -320,10 +320,10 @@ async def run_rag_stage(base_dir: Path, config: Dict) -> Dict:
         logger.info(f"Running queries with GPT-4o and images ({content_type})...")
         
         from openai import OpenAI
+        from paper2slides.utils.api_utils import get_openai_client
         
-        api_key = os.getenv("RAG_LLM_API_KEY", "")
-        base_url = os.getenv("RAG_LLM_BASE_URL")
-        client = OpenAI(api_key=api_key, base_url=base_url)
+        # Use centralized client wrapper
+        client = get_openai_client()
         
         # Execute queries (direct GPT-4o with images in original positions)
         if content_type == "paper":

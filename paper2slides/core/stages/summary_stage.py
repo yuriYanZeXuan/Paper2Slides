@@ -17,6 +17,7 @@ async def run_summary_stage(base_dir: Path, config: Dict) -> Dict:
     from openai import OpenAI
     from paper2slides.summary import extract_paper, extract_general, extract_tables_and_figures, OriginalElements
     from paper2slides.summary.paper import extract_paper_metadata_from_markdown
+    from paper2slides.utils.api_utils import get_openai_client
     
     rag_data = load_json(get_rag_checkpoint(base_dir, config))
     if not rag_data:
@@ -26,9 +27,7 @@ async def run_summary_stage(base_dir: Path, config: Dict) -> Dict:
     markdown_paths = rag_data.get("markdown_paths", [])
     content_type = rag_data.get("content_type", "paper")
     
-    api_key = os.getenv("RAG_LLM_API_KEY", "")
-    base_url = os.getenv("RAG_LLM_BASE_URL")
-    llm_client = OpenAI(api_key=api_key, base_url=base_url)
+    llm_client = get_openai_client()
     
     logger.info(f"Extracting content from indexed documents ({content_type})...")
     

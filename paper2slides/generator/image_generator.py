@@ -58,9 +58,17 @@ def process_custom_style(client: OpenAI, user_style: str, model: str = None) -> 
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": STYLE_PROCESS_PROMPT.format(user_style=user_style)}],
+            # extra_body logic removed here as it's not standard for text generation and handled by client wrapper if needed
             response_format={"type": "json_object"},
         )
-        result = json.loads(response.choices[0].message.content)
+        
+        # Handle wrapper response object which might differ slightly from raw SDK response
+        if hasattr(response, 'choices') and len(response.choices) > 0:
+             content = response.choices[0].message.content
+        else:
+             raise ValueError("Empty response from LLM")
+
+        result = json.loads(content)
         return ProcessedStyle(
             style_name=result.get("style_name", ""),
             color_tone=result.get("color_tone", ""),
@@ -82,10 +90,14 @@ class ImageGenerator:
         base_url: str = None,
         model: str = "google/gemini-3-pro-image-preview",
     ):
-        self.api_key = api_key or os.getenv("IMAGE_GEN_API_KEY", "")
-        self.base_url = base_url or os.getenv("IMAGE_GEN_BASE_URL", "https://openrouter.ai/api/v1")
+        from ..utils.api_utils import load_env_api_key, get_api_base_url, get_openai_client
+        
+        self.api_key = api_key or os.getenv("IMAGE_GEN_API_KEY") or load_env_api_key()
+        # Default to OpenRouter if no other base URL is provided, as originally configured
+        # But if standard env vars are present, they will take precedence via get_api_base_url()
+        self.base_url = base_url or os.getenv("IMAGE_GEN_BASE_URL") or get_api_base_url() or "https://openrouter.ai/api/v1"
         self.model = model
-        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.client = get_openai_client(api_key=self.api_key, base_url=self.base_url)
     
     def generate(
         self,
@@ -329,6 +341,13 @@ class ImageGenerator:
     
     def _call_model(self, prompt: str, reference_images: List[dict]) -> tuple:
         """Call the image generation model."""
+        # Check if we should use native Gemini API (based on model name or config)
+        if "gemini" in self.model.lower() and "preview" in self.model.lower():
+            try:
+                return self._call_gemini_native(prompt, reference_images)
+            except Exception as e:
+                print(f"Gemini native call failed: {e}. Falling back to OpenAI SDK.")
+        
         content = [{"type": "text", "text": prompt}]
         
         # Add each image with figure_id and caption label
@@ -358,6 +377,104 @@ class ImageGenerator:
                 return base64.b64decode(base64_data), mime_type
         
         raise RuntimeError("Image generation failed")
+
+    def _call_gemini_native(self, prompt: str, reference_images: List[dict]) -> tuple:
+        """
+        Call Gemini native API directly (ported from PosterGen2).
+        Handles raw HTTP request for image generation.
+        """
+        import requests
+        
+        # Construct endpoint - try to infer from base_url or use default
+        if "googleapis.com" in self.base_url:
+            # Public Google API
+            endpoint = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
+            headers = {"Content-Type": "application/json"}
+        else:
+            # Internal/Runway/Nano Banana proxy
+            # Remove /chat/completions suffix if present to find base
+            base = self.base_url.split("/chat/completions")[0].rstrip("/")
+            # If base already has /openai/google/v1, use it, otherwise append
+            if "/openai/google/v1" in base:
+                 endpoint = f"{base}:generateContent"
+            else:
+                 # Fallback to hardcoded internal endpoint structure if base_url is generic
+                 endpoint = "https://runway.devops.rednote.life/openai/google/v1:generateContent"
+            
+            headers = {
+                "api-key": self.api_key,
+                "Content-Type": "application/json",
+            }
+
+        # Build parts list
+        parts = [{"text": prompt}]
+        
+        for img in reference_images:
+            if img.get("base64") and img.get("mime_type"):
+                fig_id = img.get("figure_id", "Figure")
+                caption = img.get("caption", "")
+                label = f"[{fig_id}]: {caption}" if caption else f"[{fig_id}]"
+                
+                # Add label text part
+                parts.append({"text": label})
+                
+                # Add image part (inlineData format)
+                parts.append({
+                    "inlineData": {
+                        "mimeType": img['mime_type'],
+                        "data": img['base64']
+                    }
+                })
+
+        # Config exactly as in eval_gemini_poster.py
+        generation_config = {
+            "temperature": 0.6,
+            "maxOutputTokens": 7000,
+            "topP": 1,
+            "responseModalities": ["TEXT", "IMAGE"],
+            "imageConfig": {
+                "aspectRatio": "3:4" if "poster" in prompt.lower() else "16:9", # Auto-detect aspect ratio
+                "imageSize": "1K",
+                "imageOutputOptions": {
+                    "mimeType": "image/png"
+                },
+                "personGeneration": "ALLOW_ALL"
+            }
+        }
+
+        payload = {
+            "contents": [{
+                "role": "user",
+                "parts": parts
+            }],
+            "generationConfig": generation_config,
+            "safetySettings": [
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF"},
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF"}
+            ]
+        }
+
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=120)
+        
+        if response.status_code != 200:
+             raise RuntimeError(f"Gemini native API error ({response.status_code}): {response.text}")
+
+        result = response.json()
+        
+        # Parse response to find image
+        if result and "candidates" in result and result["candidates"]:
+            candidate_parts = result["candidates"][0].get("content", {}).get("parts", [])
+            for part in candidate_parts:
+                inline_data = part.get("inlineData")
+                if inline_data:
+                    b64_data = inline_data.get("data")
+                    mime_type = inline_data.get("mimeType", "image/png")
+                    if b64_data:
+                        return base64.b64decode(b64_data), mime_type
+        
+        raise RuntimeError(f"No image data in Gemini native response: {json.dumps(result)[:200]}...")
 
 
 def save_images_as_pdf(images: List[GeneratedImage], output_path: str):
