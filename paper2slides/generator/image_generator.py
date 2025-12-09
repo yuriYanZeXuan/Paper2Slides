@@ -492,7 +492,7 @@ class ImageGenerator:
         width = 1024
         
         generator = torch.Generator(device=self.local_device).manual_seed(42)
-        
+        print(f"zimage image generation: {prompt}")
         image = pipe(
             prompt=prompt,
             height=height,
@@ -501,7 +501,7 @@ class ImageGenerator:
             guidance_scale=0.0,     # Turbo 模型推荐 0
             generator=generator,
         ).images[0]
-        
+        print(f"zimage image generation: {prompt} done")
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue(), "image/png"
@@ -529,7 +529,7 @@ class ImageGenerator:
         negative_prompt = " "
         
         generator = torch.Generator(device=self.local_device).manual_seed(42)
-        
+        print(f"qwen image generation: {prompt + positive_magic}")
         image = pipe(
             prompt=prompt + positive_magic,
             negative_prompt=negative_prompt,
@@ -539,7 +539,7 @@ class ImageGenerator:
             true_cfg_scale=4.0,
             generator=generator,
         ).images[0]
-        
+        print(f"qwen image generation: {prompt + positive_magic} done")
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue(), "image/png"
