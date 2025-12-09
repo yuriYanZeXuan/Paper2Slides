@@ -14,10 +14,14 @@ PROJECT_ROOT = Path(__file__).parent.parent
 
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)
 
-# Late import to avoid circular dependency
-def _get_api_defaults():
-    from ..utils.api_utils import load_env_api_key, get_api_base_url
-    return load_env_api_key, get_api_base_url
+# Late import helper functions
+def _load_env_api_key():
+    from ..utils.api_utils import load_env_api_key
+    return load_env_api_key()
+
+def _get_api_base_url():
+    from ..utils.api_utils import get_api_base_url
+    return get_api_base_url()
 
 DEFAULT_STORAGE_DIR = PROJECT_ROOT / "rag" / "storage"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "rag" / "output"
@@ -32,12 +36,12 @@ class APIConfig:
     """
     
     llm_api_key: str = field(
-        default_factory=load_env_api_key
+        default_factory=_load_env_api_key
     )
     """Required. Set via GEMINI_TEXT_KEY, RUNWAY_API_KEY, OPENAI_API_KEY or RAG_LLM_API_KEY."""
     
     llm_base_url: Optional[str] = field(
-        default_factory=get_api_base_url
+        default_factory=_get_api_base_url
     )
     """Optional. If None, uses OpenAI official API. Set via OPENAI_BASE_URL etc."""
     
