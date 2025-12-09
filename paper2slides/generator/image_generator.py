@@ -84,6 +84,9 @@ def process_custom_style(client: OpenAI, user_style: str, model: str = None) -> 
 class ImageGenerator:
     """Generate poster/slides images from ContentPlan."""
     
+    # Default native endpoint (matches PosterGen2/eval/gemini_image_gen.py)
+    DEFAULT_GEMINI_NATIVE_URL = "https://runway.devops.rednote.life/openai/google/v1:generateContent"
+    
     def __init__(
         self,
         api_key: str = None,
@@ -95,10 +98,9 @@ class ImageGenerator:
         # Load keys specifically for "image" usage
         self.api_key = api_key or load_env_api_key("image")
         
-        # Default to OpenRouter if no other base URL is provided, as originally configured
-        # But if standard env vars are present, they will take precedence via get_api_base_url("image")
+        # 若 .env 未提供 IMAGE_GEN_BASE_URL，则使用与 PosterGen2 相同的默认原生 URL
         env_base_url = get_api_base_url("image")
-        self.base_url = base_url or env_base_url or "https://openrouter.ai/api/v1"
+        self.base_url = base_url or env_base_url or self.DEFAULT_GEMINI_NATIVE_URL
         self.model = model
         
         # Use key_type="image" to ensure correct logging/client selection
@@ -351,6 +353,9 @@ class ImageGenerator:
             try:
                 return self._call_gemini_native(prompt, reference_images)
             except Exception as e:
+                # 如果使用的是原生 gemini endpoint，避免回退到 chat/completions 以免 404
+                if "google/v1" in (self.base_url or "") or ":generateContent" in (self.base_url or ""):
+                    raise
                 print(f"Gemini native call failed: {e}. Falling back to OpenAI SDK.")
         
         content = [{"type": "text", "text": prompt}]
@@ -390,33 +395,20 @@ class ImageGenerator:
         """
         import requests
         
-        # Construct endpoint - try to infer from base_url or use default
-        if "googleapis.com" in self.base_url:
-            # Public Google API
-            endpoint = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
+        # 直接使用配置的 base_url；如未配置则使用默认原生 URL
+        endpoint = self.base_url or self.DEFAULT_GEMINI_NATIVE_URL
+
+        # 公网 googleapis 特殊处理（按官方格式补全）
+        if "googleapis.com" in endpoint and ":generateContent" not in endpoint:
+            endpoint = f"{endpoint}/models/{self.model}:generateContent?key={self.api_key}"
             headers = {"Content-Type": "application/json"}
         else:
-            # Internal/Runway/Nano Banana proxy
-            # Remove /chat/completions suffix if present to find base
-            base = self.base_url.split("/chat/completions")[0].rstrip("/")
-            
-            # CASE 1: User provided full path to /openai/google/v1 (Recommended)
-            if base.endswith("/google/v1"):
-                 endpoint = f"{base}:generateContent"
-            
-            # CASE 2: User provided base path like .../openai
-            elif base.endswith("/openai"):
-                 endpoint = f"{base}/google/v1:generateContent"
-            
-            # CASE 3: Fallback/Other
-            else:
-                 # If base url is generic, try to append standard path
-                 endpoint = f"{base}/google/v1:generateContent"
-            
             headers = {
                 "api-key": self.api_key,
                 "Content-Type": "application/json",
             }
+        
+        print(f"[DEBUG] Gemini Native Endpoint: {endpoint}")
 
         # Build parts list
         parts = [{"text": prompt}]
