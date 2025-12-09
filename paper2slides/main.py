@@ -62,14 +62,14 @@ def main():
                         help="Fast mode: parse only, no RAG indexing (direct LLM query)")
     parser.add_argument(
         "--image-backend",
-        choices=["gemini", "zimage"],
+        choices=["gemini", "zimage", "qwen"],
         default=os.getenv("P2S_IMAGE_BACKEND", "gemini"),
-        help="Image generation backend: 'gemini' (default) or 'zimage' for local Z-Image model",
+        help="Image generation backend: 'gemini' (default), 'zimage' for local Z-Image, or 'qwen' for local Qwen-Image",
     )
     parser.add_argument(
         "--local-image-model",
         default=os.getenv("P2S_LOCAL_IMAGE_MODEL"),
-        help="Local Z-Image model path or repo id (used when image-backend is 'zimage')",
+        help="Local image model path or repo id (used when image-backend is 'zimage' or 'qwen')",
     )
     
     args = parser.parse_args()

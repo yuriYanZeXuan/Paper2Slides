@@ -105,12 +105,17 @@ class ImageGenerator:
         """
         from ..utils.api_utils import load_env_api_key, get_api_base_url, get_openai_client
         
-        # 后端选择 & 本地模型配置
+        # 后端选择
         self.backend = (backend or os.getenv("P2S_IMAGE_BACKEND", "gemini")).lower()
-        self.local_model = local_model or os.getenv(
-            "P2S_LOCAL_IMAGE_MODEL",
-            "Tongyi-MAI/Z-Image-Turbo",
-        )
+        
+        # 本地模型路径：根据后端类型给出不同默认值
+        env_local_model = os.getenv("P2S_LOCAL_IMAGE_MODEL")
+        if self.backend == "qwen":
+            default_local_model = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen_image"
+        else:
+            # 默认按 Z-Image 处理
+            default_local_model = "Tongyi-MAI/Z-Image-Turbo"
+        self.local_model = local_model or env_local_model or default_local_model
         self.local_device = os.getenv("P2S_LOCAL_IMAGE_DEVICE", "cuda")
         self._local_pipe = None  # 延迟加载 Z-ImagePipeline
         self._local_torch = None
@@ -377,9 +382,12 @@ class ImageGenerator:
     
     def _call_model(self, prompt: str, reference_images: List[dict]) -> tuple:
         """Call the image generation model."""
-        # 若选择本地 Z-Image 后端，则直接走本地推理分支
-        if getattr(self, "backend", "gemini") == "zimage":
+        # 若选择本地后端，则直接走对应本地推理分支
+        backend = getattr(self, "backend", "gemini")
+        if backend == "zimage":
             return self._call_zimage_local(prompt, reference_images)
+        if backend == "qwen":
+            return self._call_qwen_local(prompt, reference_images)
         
         # Check if we should use native Gemini API (based on model name or config)
         if "gemini" in self.model.lower() and "preview" in self.model.lower():
@@ -447,6 +455,30 @@ class ImageGenerator:
         self._local_torch = torch
         return self._local_pipe
     
+    def _get_qwen_pipeline(self):
+        """Lazy-load Qwen DiffusionPipeline 模型。"""
+        if self._local_pipe is not None:
+            return self._local_pipe
+        
+        try:
+            import torch
+            from diffusers import DiffusionPipeline
+        except Exception as e:
+            raise RuntimeError(f"Failed to import local Qwen-Image dependencies (torch/diffusers): {e}")
+        
+        # 根据设备选择合适的 dtype
+        if self.local_device == "cuda":
+            torch_dtype = torch.bfloat16
+        else:
+            torch_dtype = torch.float32
+        
+        pipe = DiffusionPipeline.from_pretrained(self.local_model, torch_dtype=torch_dtype)
+        pipe = pipe.to(self.local_device)
+        
+        self._local_pipe = pipe
+        self._local_torch = torch
+        return self._local_pipe
+    
     def _call_zimage_local(self, prompt: str, reference_images: List[dict]) -> tuple:
         """
         使用本地 ZImagePipeline 生成图片，返回 (bytes, mime_type)。
@@ -467,6 +499,44 @@ class ImageGenerator:
             width=width,
             num_inference_steps=9,  # 与 dev/Z_image.py 一致
             guidance_scale=0.0,     # Turbo 模型推荐 0
+            generator=generator,
+        ).images[0]
+        
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue(), "image/png"
+    
+    def _call_qwen_local(self, prompt: str, reference_images: List[dict]) -> tuple:
+        """
+        使用本地 Qwen-Image DiffusionPipeline 生成图片，返回 (bytes, mime_type)。
+        当前忽略 reference_images，仅基于文本 prompt 生成。
+        """
+        pipe = self._get_qwen_pipeline()
+        torch = self._local_torch
+        
+        # 参考 dev/Qwen_image.py 的推荐分辨率
+        aspect_ratios = {
+            "16:9": (1664, 928),
+            "3:4": (1140, 1472),
+        }
+        if "poster" in prompt.lower():
+            width, height = aspect_ratios["3:4"]
+        else:
+            width, height = aspect_ratios["16:9"]
+        
+        # 默认英文 prompt，加上官方建议的 positive magic
+        positive_magic = ", Ultra HD, 4K, cinematic composition."
+        negative_prompt = " "
+        
+        generator = torch.Generator(device=self.local_device).manual_seed(42)
+        
+        image = pipe(
+            prompt=prompt + positive_magic,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            num_inference_steps=50,
+            true_cfg_scale=4.0,
             generator=generator,
         ).images[0]
         
