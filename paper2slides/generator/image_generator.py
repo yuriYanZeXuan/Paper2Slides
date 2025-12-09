@@ -6,6 +6,7 @@ Generate poster/slides images from ContentPlan.
 import os
 import json
 import base64
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -93,8 +94,28 @@ class ImageGenerator:
         base_url: str = None,
         model: str = "google/gemini-3-pro-image-preview",
         throttle_ms: int = None,
+        backend: str = None,
+        local_model: str = None,
     ):
+        """
+        Args:
+            backend: 'gemini' 使用远程 Gemini/OpenAI 网关（默认），
+                     'zimage' 使用本地 Z-Image 模型（diffusers）。
+            local_model: 本地 Z-Image 模型的 repo id 或路径，默认 `Tongyi-MAI/Z-Image-Turbo`。
+        """
         from ..utils.api_utils import load_env_api_key, get_api_base_url, get_openai_client
+        
+        # 后端选择 & 本地模型配置
+        self.backend = (backend or os.getenv("P2S_IMAGE_BACKEND", "gemini")).lower()
+        self.local_model = local_model or os.getenv("P2S_LOCAL_IMAGE_MODEL", "Tongyi-MAI/Z-Image-Turbo")
+        self.local_device = os.getenv("P2S_LOCAL_IMAGE_DEVICE", "cuda")
+        self._local_pipe = None  # 延迟加载 Z-ImagePipeline
+        self._local_torch = None
+        self.model = model
+        
+        # Throttle between image generations to avoid 429; default from env
+        env_throttle_ms = os.getenv("IMAGE_GEN_THROTTLE_MS")
+        self.throttle_seconds = (throttle_ms or (int(env_throttle_ms) if env_throttle_ms else 0)) / 1000.0
         
         # Load keys specifically for "image" usage
         self.api_key = api_key or load_env_api_key("image")
@@ -102,10 +123,6 @@ class ImageGenerator:
         # 若 .env 未提供 IMAGE_GEN_BASE_URL，则使用与 PosterGen2 相同的默认原生 URL
         env_base_url = get_api_base_url("image")
         self.base_url = base_url or env_base_url or self.DEFAULT_GEMINI_NATIVE_URL
-        self.model = model
-        # Throttle between image generations to avoid 429; default from env
-        env_throttle_ms = os.getenv("IMAGE_GEN_THROTTLE_MS")
-        self.throttle_seconds = (throttle_ms or (int(env_throttle_ms) if env_throttle_ms else 0)) / 1000.0
         
         # Use key_type="image" to ensure correct logging/client selection
         self.client = get_openai_client(api_key=self.api_key, base_url=self.base_url, key_type="image")
@@ -357,6 +374,10 @@ class ImageGenerator:
     
     def _call_model(self, prompt: str, reference_images: List[dict]) -> tuple:
         """Call the image generation model."""
+        # 若选择本地 Z-Image 后端，则直接走本地推理分支
+        if getattr(self, "backend", "gemini") == "zimage":
+            return self._call_zimage_local(prompt, reference_images)
+        
         # Check if we should use native Gemini API (based on model name or config)
         if "gemini" in self.model.lower() and "preview" in self.model.lower():
             try:
@@ -400,6 +421,55 @@ class ImageGenerator:
                 return base64.b64decode(base64_data), mime_type
         
         raise RuntimeError("Image generation failed")
+    
+    def _get_zimage_pipeline(self):
+        """Lazy-load ZImagePipeline 模型，避免在未选择本地后端时加载大模型。"""
+        if self._local_pipe is not None:
+            return self._local_pipe
+        
+        try:
+            import torch
+            from diffusers import ZImagePipeline
+        except Exception as e:
+            raise RuntimeError(f"Failed to import local Z-Image dependencies (torch/diffusers): {e}")
+        
+        pipe = ZImagePipeline.from_pretrained(
+            self.local_model,
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=False,
+        )
+        pipe.to(self.local_device)
+        
+        self._local_pipe = pipe
+        self._local_torch = torch
+        return self._local_pipe
+    
+    def _call_zimage_local(self, prompt: str, reference_images: List[dict]) -> tuple:
+        """
+        使用本地 ZImagePipeline 生成图片，返回 (bytes, mime_type)。
+        当前忽略 reference_images，仅基于文本 prompt 生成。
+        """
+        pipe = self._get_zimage_pipeline()
+        torch = self._local_torch
+        
+        # 简单的尺寸设定：后续可以根据 prompt / config 调整比例
+        height = 1024
+        width = 1024
+        
+        generator = torch.Generator(device=self.local_device).manual_seed(42)
+        
+        image = pipe(
+            prompt=prompt,
+            height=height,
+            width=width,
+            num_inference_steps=9,  # 与 dev/Z_image.py 一致
+            guidance_scale=0.0,     # Turbo 模型推荐 0
+            generator=generator,
+        ).images[0]
+        
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue(), "image/png"
 
     def _call_gemini_native(self, prompt: str, reference_images: List[dict]) -> tuple:
         """

@@ -60,6 +60,12 @@ def main():
                         help="Enable debug logging")
     parser.add_argument("--fast", action="store_true",
                         help="Fast mode: parse only, no RAG indexing (direct LLM query)")
+    parser.add_argument(
+        "--image-backend",
+        choices=["gemini", "zimage"],
+        default=os.getenv("P2S_IMAGE_BACKEND", "gemini"),
+        help="Image generation backend: 'gemini' (default) or 'zimage' for local Z-Image model",
+    )
     
     args = parser.parse_args()
     
@@ -92,6 +98,7 @@ def main():
         "input_path": input_path,
         "content_type": args.content,
         "output_type": args.output,
+        "image_backend": args.image_backend,
         "style": style_type,
         "custom_style": custom_style,
         "slides_length": args.length,

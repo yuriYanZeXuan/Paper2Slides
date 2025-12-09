@@ -2,6 +2,7 @@
 Generate Stage - Image generation
 """
 import logging
+import os
 from pathlib import Path
 from typing import Dict
 
@@ -79,7 +80,9 @@ async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> 
     gen_input = GenerationInput(config=gen_config, content=content, origin=origin)
     
     logger.info("Generating images...")
-    generator = ImageGenerator()
+    # 选择图片生成后端：优先使用 config 中的 image_backend，其次使用环境变量，最后默认 gemini
+    image_backend = config.get("image_backend") or os.getenv("P2S_IMAGE_BACKEND", "gemini")
+    generator = ImageGenerator(backend=image_backend)
     images = generator.generate(plan, gen_input)
     logger.info(f"  Generated {len(images)} images")
     
