@@ -4,7 +4,7 @@
 #   - gemini：远程 Gemini Image（默认）
 #   - zimage：本地 Z-Image 模型
 #   - qwen  ：本地 Qwen-Image 模型
-IMAGE_BACKEND=${IMAGE_BACKEND:-zimage}
+IMAGE_BACKEND=${IMAGE_BACKEND:-qwen}
 
 # 根据后端选择默认本地权重路径（可通过环境变量 LOCAL_IMAGE_MODEL 覆盖）
 if [ "${IMAGE_BACKEND}" = "qwen" ]; then
