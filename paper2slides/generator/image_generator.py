@@ -395,20 +395,14 @@ class ImageGenerator:
         """
         import requests
         
-        # 直接使用配置的 base_url；如未配置则使用默认原生 URL
-        endpoint = self.base_url or self.DEFAULT_GEMINI_NATIVE_URL
-
-        # 公网 googleapis 特殊处理（按官方格式补全）
-        if "googleapis.com" in endpoint and ":generateContent" not in endpoint:
-            endpoint = f"{endpoint}/models/{self.model}:generateContent?key={self.api_key}"
-            headers = {"Content-Type": "application/json"}
-        else:
-            headers = {
-                "api-key": self.api_key,
-                "Content-Type": "application/json",
-            }
+        # 固定使用与 PosterGen2 一致的原生 URL，避免分支和拼接误差
+        endpoint = "https://runway.devops.rednote.life/openai/google/v1:generateContent"
+        headers = {
+            "api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
         
-        print(f"[DEBUG] Gemini Native Endpoint: {endpoint}")
+        print(f"[DEBUG] Gemini Native Endpoint (Fixed): {endpoint}")
 
         # Build parts list
         parts = [{"text": prompt}]
