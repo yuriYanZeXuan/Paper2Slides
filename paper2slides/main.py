@@ -66,6 +66,11 @@ def main():
         default=os.getenv("P2S_IMAGE_BACKEND", "gemini"),
         help="Image generation backend: 'gemini' (default) or 'zimage' for local Z-Image model",
     )
+    parser.add_argument(
+        "--local-image-model",
+        default=os.getenv("P2S_LOCAL_IMAGE_MODEL"),
+        help="Local Z-Image model path or repo id (used when image-backend is 'zimage')",
+    )
     
     args = parser.parse_args()
     
@@ -99,6 +104,7 @@ def main():
         "content_type": args.content,
         "output_type": args.output,
         "image_backend": args.image_backend,
+        "local_image_model": args.local_image_model,
         "style": style_type,
         "custom_style": custom_style,
         "slides_length": args.length,

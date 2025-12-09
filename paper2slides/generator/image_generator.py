@@ -107,7 +107,10 @@ class ImageGenerator:
         
         # 后端选择 & 本地模型配置
         self.backend = (backend or os.getenv("P2S_IMAGE_BACKEND", "gemini")).lower()
-        self.local_model = local_model or os.getenv("P2S_LOCAL_IMAGE_MODEL", "Tongyi-MAI/Z-Image-Turbo")
+        self.local_model = local_model or os.getenv(
+            "P2S_LOCAL_IMAGE_MODEL",
+            "Tongyi-MAI/Z-Image-Turbo",
+        )
         self.local_device = os.getenv("P2S_LOCAL_IMAGE_DEVICE", "cuda")
         self._local_pipe = None  # 延迟加载 Z-ImagePipeline
         self._local_torch = None
