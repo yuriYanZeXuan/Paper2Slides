@@ -92,6 +92,7 @@ class ImageGenerator:
         api_key: str = None,
         base_url: str = None,
         model: str = "google/gemini-3-pro-image-preview",
+        throttle_ms: int = None,
     ):
         from ..utils.api_utils import load_env_api_key, get_api_base_url, get_openai_client
         
@@ -102,6 +103,9 @@ class ImageGenerator:
         env_base_url = get_api_base_url("image")
         self.base_url = base_url or env_base_url or self.DEFAULT_GEMINI_NATIVE_URL
         self.model = model
+        # Throttle between image generations to avoid 429; default from env
+        env_throttle_ms = os.getenv("IMAGE_GEN_THROTTLE_MS")
+        self.throttle_seconds = (throttle_ms or (int(env_throttle_ms) if env_throttle_ms else 0)) / 1000.0
         
         # Use key_type="image" to ensure correct logging/client selection
         self.client = get_openai_client(api_key=self.api_key, base_url=self.base_url, key_type="image")
@@ -203,6 +207,11 @@ class ImageGenerator:
                 }
             
             results.append(GeneratedImage(section_id=section.id, image_data=image_data, mime_type=mime_type))
+
+            # Throttle to avoid hitting rate limits (429)
+            if self.throttle_seconds > 0 and i != len(plan.sections) - 1:
+                import time
+                time.sleep(self.throttle_seconds)
         
         return results
     
@@ -377,6 +386,10 @@ class ImageGenerator:
             messages=[{"role": "user", "content": content}],
             extra_body={"modalities": ["image", "text"]}
         )
+        
+        # 防御：若没有返回 choices，直接报错而不是 IndexError
+        if not hasattr(response, "choices") or not response.choices:
+            raise RuntimeError("Image generation failed: empty choices from fallback client.")
         
         message = response.choices[0].message
         if hasattr(message, 'images') and message.images:
