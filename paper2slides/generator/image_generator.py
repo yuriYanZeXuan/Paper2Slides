@@ -497,7 +497,7 @@ class ImageGenerator:
             prompt=prompt,
             height=height,
             width=width,
-            num_inference_steps=9,  # 与 dev/Z_image.py 一致
+            num_inference_steps=50,  # 与 dev/Z_image.py 一致
             guidance_scale=0.0,     # Turbo 模型推荐 0
             generator=generator,
         ).images[0]
