@@ -1,21 +1,24 @@
+import os
 import torch
 from diffusers import ZImagePipeline
 from PIL import Image
 
 from paper2slides.agents.tools.zimage_flowedit_core import FlowEditZImage
 
+
 if __name__ == "__main__":
-    # Load Pipeline
+    # Load Pipeline（本地 Z-Image 权重，路径与 run_poster.sh 保持一致）
+    model_path = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image"
     try:
         pipe = ZImagePipeline.from_pretrained(
-            "Tongyi-MAI/Z-Image-Turbo",
+            model_path,
             torch_dtype=torch.bfloat16,
             low_cpu_mem_usage=False,
         )
         pipe.to("cuda")
         # pipe.enable_model_cpu_offload() # Optional
     except Exception as e:
-        print(f"Error loading model: {e}")
+        print(f"Error loading model from {model_path}: {e}")
         exit(1)
 
     # Load Source Image (Create dummy if not exists)

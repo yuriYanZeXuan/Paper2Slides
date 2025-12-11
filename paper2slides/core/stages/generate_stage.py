@@ -82,8 +82,8 @@ async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> 
     logger.info("Generating images...")
     # 选择图片生成后端与本地模型路径：
     # 优先使用 config 中的 image_backend / local_image_model，其次使用环境变量
-    image_backend = config.get("image_backend") or os.getenv("P2S_IMAGE_BACKEND", "gemini")
-    local_image_model = config.get("local_image_model") or os.getenv("P2S_LOCAL_IMAGE_MODEL")
+    image_backend = config.get("image_backend")
+    local_image_model = config.get("local_image_model")
     generator = ImageGenerator(backend=image_backend, local_model=local_image_model)
     images = generator.generate(plan, gen_input)
     logger.info(f"  Generated {len(images)} images")

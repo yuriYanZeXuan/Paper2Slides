@@ -1,10 +1,13 @@
+import os
 import torch
 from diffusers import ZImagePipeline
 
-# 1. Load the pipeline
-# Use bfloat16 for optimal performance on supported GPUs
+# 本地权重路径，优先读环境变量，其次用与 run_poster.sh 一致的默认路径
+MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image"
+
+# 1. Load the pipeline（使用本地 Z-Image 权重）
 pipe = ZImagePipeline.from_pretrained(
-    "Tongyi-MAI/Z-Image-Turbo",
+    MODEL_PATH,
     torch_dtype=torch.bfloat16,
     low_cpu_mem_usage=False,
 )

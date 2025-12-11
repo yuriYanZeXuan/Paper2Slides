@@ -63,12 +63,12 @@ def main():
     parser.add_argument(
         "--image-backend",
         choices=["gemini", "zimage", "qwen"],
-        default=os.getenv("P2S_IMAGE_BACKEND", "gemini"),
+        default="zimage",
         help="Image generation backend: 'gemini' (default), 'zimage' for local Z-Image, or 'qwen' for local Qwen-Image",
     )
     parser.add_argument(
         "--local-image-model",
-        default=os.getenv("P2S_LOCAL_IMAGE_MODEL"),
+        default="Tongyi-MAI/Z-Image-Turbo",
         help="Local image model path or repo id (used when image-backend is 'zimage' or 'qwen')",
     )
     

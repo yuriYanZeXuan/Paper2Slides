@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 from openai import OpenAI
-
+from diffusers import DiffusionPipeline, ZImagePipeline
 from .config import GenerationInput
 from .content_planner import ContentPlan, Section
 from ..prompts.image_generation import (
@@ -96,6 +96,7 @@ class ImageGenerator:
         throttle_ms: int = None,
         backend: str = None,
         local_model: str = None,
+        device: str = "cuda",
     ):
         """
         Args:
@@ -106,19 +107,11 @@ class ImageGenerator:
         from ..utils.api_utils import load_env_api_key, get_api_base_url, get_openai_client
         
         # 后端选择
-        self.backend = (backend or os.getenv("P2S_IMAGE_BACKEND", "gemini")).lower()
-        
-        # 本地模型路径：根据后端类型给出不同默认值
-        env_local_model = os.getenv("P2S_LOCAL_IMAGE_MODEL")
-        if self.backend == "qwen":
-            default_local_model = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen_image"
-        else:
-            # 默认按 Z-Image 处理
-            default_local_model = "Tongyi-MAI/Z-Image-Turbo"
-        self.local_model = local_model or env_local_model or default_local_model
-        self.local_device = os.getenv("P2S_LOCAL_IMAGE_DEVICE", "cuda")
+        self.backend = backend
+        assert self.backend in ["gemini", "zimage", "qwen"]
+        self.local_model = local_model
+        self.local_device = device
         self._local_pipe = None  # 延迟加载 Z-ImagePipeline
-        self._local_torch = None
         self.model = model
         
         # Throttle between image generations to avoid 429; default from env
@@ -452,20 +445,12 @@ class ImageGenerator:
         pipe.to(self.local_device)
         
         self._local_pipe = pipe
-        self._local_torch = torch
         return self._local_pipe
     
     def _get_qwen_pipeline(self):
         """Lazy-load Qwen DiffusionPipeline 模型。"""
         if self._local_pipe is not None:
             return self._local_pipe
-        
-        try:
-            import torch
-            from diffusers import DiffusionPipeline
-        except Exception as e:
-            raise RuntimeError(f"Failed to import local Qwen-Image dependencies (torch/diffusers): {e}")
-        
         # 根据设备选择合适的 dtype
         if self.local_device == "cuda":
             torch_dtype = torch.bfloat16
@@ -476,7 +461,6 @@ class ImageGenerator:
         pipe = pipe.to(self.local_device)
         
         self._local_pipe = pipe
-        self._local_torch = torch
         return self._local_pipe
     
     def _call_zimage_local(self, prompt: str, reference_images: List[dict]) -> tuple:
@@ -485,7 +469,6 @@ class ImageGenerator:
         当前忽略 reference_images，仅基于文本 prompt 生成。
         """
         pipe = self._get_zimage_pipeline()
-        torch = self._local_torch
         
         # 简单的尺寸设定：后续可以根据 prompt / config 调整比例
         height = 1024
@@ -512,7 +495,6 @@ class ImageGenerator:
         当前忽略 reference_images，仅基于文本 prompt 生成。
         """
         pipe = self._get_qwen_pipeline()
-        torch = self._local_torch
         
         # 参考 dev/Qwen_image.py 的推荐分辨率
         aspect_ratios = {

@@ -116,7 +116,12 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
         return
 
     # 5. 构造 PosterRefinerAgent，并依次对图片做强化
-    refiner = PosterRefinerAgent(device=args.device)
+    # Z-Image 权重路径：优先使用 CLI/local env，其次退回到与 run_poster.sh 一致的默认路径
+    zimage_model = (
+        args.local_image_model
+        or "Tongyi-MAI/Z-Image-Turbo"
+    )
+    refiner = PosterRefinerAgent(zimage_model_name=zimage_model, device=args.device)
 
     for img_path in image_paths:
         log_agent_info(agent, f"refine image={img_path.name}")
@@ -158,9 +163,9 @@ def main() -> None:
     parser.add_argument("--output-dir", default=str(Path(__file__).parent.parent.parent / "outputs"),
                         help="Output root directory")
     parser.add_argument("--fast", action="store_true", help="Fast mode: parse only, no RAG indexing")
-    parser.add_argument("--local-image-model", default=os.getenv("P2S_LOCAL_IMAGE_MODEL"),
+    parser.add_argument("--local-image-model", default="Tongyi-MAI/Z-Image-Turbo",
                         help="Local Z-Image model path or repo id")
-    parser.add_argument("--device", default=os.getenv("P2S_LOCAL_IMAGE_DEVICE", "cuda"),
+    parser.add_argument("--device", default="cuda",
                         help="Device for local Z-Image (cuda/cpu)")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
