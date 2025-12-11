@@ -7,7 +7,6 @@ import torch
 from diffusers import ZImagePipeline
 
 from paper2slides.utils.logging import get_logger
-from paper2slides.generator.image_generator import ImageGeneratorConfig
 from paper2slides.agents.tools.zimage_flowedit_core import FlowEditZImage
 from paper2slides.utils.agent_logging import (
     log_agent_start,
