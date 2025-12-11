@@ -49,6 +49,7 @@ def save_json_log(
 
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+        print(f"Saved JSON log to {path}")
 
 def save_before_after_image(
     agent_name: str,
@@ -94,3 +95,4 @@ def save_before_after_image(
     canvas.paste(a, (bw, 0))
 
     canvas.save(path)
+    print(f"Saved image log to {path}")
