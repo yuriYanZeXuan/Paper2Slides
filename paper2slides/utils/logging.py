@@ -6,6 +6,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def get_logger(name: str | None = None) -> logging.Logger:
+    """Return a named logger, defaulting to the 'paper2slides' root logger."""
+    return logging.getLogger(name or "paper2slides")
+
+
 def setup_logging(level: int = logging.INFO):
     """Configure logging with console output."""
     logging.basicConfig(
