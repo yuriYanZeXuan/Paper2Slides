@@ -1,7 +1,6 @@
-import os
 from typing import List, Tuple
 
-from PIL import Image
+from PIL import Image, ImageDraw
 import torch
 
 from diffusers import ZImagePipeline
@@ -13,6 +12,11 @@ from paper2slides.utils.agent_logging import (
     log_agent_info,
     log_agent_success,
 )
+from paper2slides.utils.agent_artifact_logging import (
+    save_before_after_image,
+    save_json_log,
+    get_default_log_root,
+)
 
 
 logger = get_logger(__name__)
@@ -20,6 +24,9 @@ logger = get_logger(__name__)
 
 BBox = Tuple[int, int, int, int]
 
+
+_AGENT_NAME = "poster_refiner"
+_LOG_ROOT = get_default_log_root(_AGENT_NAME)
 
 class PosterRefinerAgent:
     """Agent that refines poster small-text regions using Z-Image FlowEdit.
@@ -57,7 +64,19 @@ class PosterRefinerAgent:
         """
 
         # TODO: 接入 Qwen-VL / 其他 VLM, 根据 prompt + 图像返回评分
-        return 5.0
+        score = 5.0
+
+        # 将打分结果记录为 json，方便后续调试多轮闭环
+        save_json_log(
+            agent_name=_AGENT_NAME,
+            func_name="assess_clarity",
+            payload={
+                "score": float(score),
+                "note": "dummy implementation; replace with real VLM score.",
+            },
+            log_root=_LOG_ROOT,
+        )
+        return score
 
     def ground_small_text(self, image: Image.Image) -> List[BBox]:
         """定位需要润色的小文字区域.
@@ -73,7 +92,33 @@ class PosterRefinerAgent:
         y0 = max(cy - bh // 2, 0)
         x1 = min(cx + bw // 2, w)
         y1 = min(cy + bh // 2, h)
-        return [(x0, y0, x1, y1)]
+        bboxes = [(x0, y0, x1, y1)]
+
+        # 可视化：在复制的图像上绘制 bbox，作为 "after" 图用于日志记录
+        vis_img = image.copy()
+        draw = ImageDraw.Draw(vis_img)
+        for (bx0, by0, bx1, by1) in bboxes:
+            draw.rectangle((bx0, by0, bx1, by1), outline="red", width=3)
+
+        save_before_after_image(
+            agent_name=_AGENT_NAME,
+            func_name="ground_small_text",
+            before_img=image,
+            after_img=vis_img,
+            log_root=_LOG_ROOT,
+        )
+
+        # 将 grounding 结果记录为 json
+        save_json_log(
+            agent_name=_AGENT_NAME,
+            func_name="ground_small_text",
+            payload={
+                "image_size": [int(w), int(h)],
+                "bboxes": [list(map(int, b)) for b in bboxes],
+            },
+            log_root=_LOG_ROOT,
+        )
+        return bboxes
 
     # ============ FlowEdit 增强 ============
     def refine_patch(
@@ -114,6 +159,27 @@ class PosterRefinerAgent:
 
         # 缩放回原始 bbox 大小
         edited_resized = edited.resize((x1 - x0, y1 - y0), Image.LANCZOS)
+
+        # 日志：记录一次 patch 编辑的前后图片 + 相关参数
+        save_before_after_image(
+            agent_name=_AGENT_NAME,
+            func_name="refine_patch",
+            before_img=crop,
+            after_img=edited_resized,
+            log_root=_LOG_ROOT,
+        )
+        save_json_log(
+            agent_name=_AGENT_NAME,
+            func_name="refine_patch",
+            payload={
+                "bbox": [int(x0), int(y0), int(x1), int(y1)],
+                "upscale_factor": int(upscale_factor),
+                "src_prompt": src_prompt,
+                "tar_prompt": tar_prompt,
+            },
+            log_root=_LOG_ROOT,
+        )
+
         return edited_resized
 
     def stitch_patches(
@@ -128,6 +194,24 @@ class PosterRefinerAgent:
         out = base_image.copy()
         for patch, (x0, y0, x1, y1) in zip(patches, bboxes):
             out.paste(patch, (x0, y0, x1, y1))
+
+        # 日志：整张图拼接前后对比
+        save_before_after_image(
+            agent_name=_AGENT_NAME,
+            func_name="stitch_patches",
+            before_img=base_image,
+            after_img=out,
+            log_root=_LOG_ROOT,
+        )
+        save_json_log(
+            agent_name=_AGENT_NAME,
+            func_name="stitch_patches",
+            payload={
+                "num_patches": len(patches),
+                "bboxes": [list(map(int, b)) for b in bboxes],
+            },
+            log_root=_LOG_ROOT,
+        )
         return out
 
     def run(
