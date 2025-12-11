@@ -17,14 +17,15 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 
 from PIL import Image
 
-from paper2slides.utils import setup_logging
+from paper2slides.utils import setup_logging, load_json
 from paper2slides.utils.path_utils import normalize_input_path, get_project_name, parse_style
-from paper2slides.core.paths import get_base_dir, get_config_dir
+from paper2slides.core.paths import get_base_dir, get_config_dir, get_plan_checkpoint
 from paper2slides.core.pipeline import run_pipeline, STAGES
 from paper2slides.utils.agent_logging import (
     log_agent_start,
@@ -36,6 +37,47 @@ from paper2slides.agents.poster_refiner import PosterRefinerAgent
 
 
 logger = logging.getLogger(__name__)
+
+
+def _split_content_to_spans(text: str) -> List[str]:
+    """将 section 的长 content 按句子/段落拆分为较短的文字片段."""
+    if not text:
+        return []
+    # 先按换行粗略切分，再按常见句末标点进一步分句
+    spans: List[str] = []
+    for block in re.split(r"[\r\n]+", text):
+        block = block.strip()
+        if not block:
+            continue
+        parts = re.split(r"[。！？!?；;]+", block)
+        for p in parts:
+            p = p.strip()
+            if p:
+                spans.append(p)
+    return spans
+
+
+def _build_plan_text_spans(plan_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """从 checkpoint_plan.json 中构造 poster 用的文字片段列表."""
+    result: List[Dict[str, Any]] = []
+    plan = plan_data.get("plan") or {}
+    sections = plan.get("sections") or []
+
+    for sec in sections:
+        sec_id = sec.get("id", "")
+        title = sec.get("title", "")
+        content = sec.get("content", "") or ""
+        spans = _split_content_to_spans(content)
+        for idx, span in enumerate(spans, start=1):
+            result.append(
+                {
+                    "id": f"{sec_id or 'section'}_{idx}",
+                    "section_id": sec_id,
+                    "section_title": title,
+                    "text": span,
+                }
+            )
+    return result
 
 
 def _find_latest_output_dir(config_dir: Path) -> Path:
@@ -106,6 +148,19 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
 
     asyncio.run(run_pipeline(base_dir, config_dir, config, from_stage))
 
+    # 2.5 加载本次生成使用的内容规划（checkpoint_plan.json），准备用于文字精准对齐
+    plan_text_spans: List[Dict[str, Any]] = []
+    try:
+        plan_ckpt = get_plan_checkpoint(config_dir)
+        if plan_ckpt.exists():
+            plan_data = load_json(plan_ckpt)
+            plan_text_spans = _build_plan_text_spans(plan_data)
+            log_agent_info(agent, f"loaded {len(plan_text_spans)} text spans from plan checkpoint")
+        else:
+            log_agent_warning(agent, f"plan checkpoint not found: {plan_ckpt}")
+    except Exception as e:
+        log_agent_warning(agent, f"failed to load plan checkpoint for text spans: {e}")
+
     # 3. 找到本次生成的输出图片目录
     output_dir = _find_latest_output_dir(config_dir)
     log_agent_info(agent, f"raw outputs dir={output_dir}")
@@ -122,23 +177,22 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
         args.local_image_model
         or "Tongyi-MAI/Z-Image-Turbo"
     )
-    refiner = PosterRefinerAgent(zimage_model_name=zimage_model, device=args.device)
+    refiner = PosterRefinerAgent(
+        zimage_model_name=zimage_model,
+        device=args.device,
+        style_name=style_type,
+        plan_text_spans=plan_text_spans,
+    )
 
     for img_path in image_paths:
         log_agent_info(agent, f"refine image={img_path.name}")
         img = Image.open(img_path).convert("RGB")
 
-        # 简单的 src_prompt / tar_prompt 设计：
-        if args.output == "poster":
-            src_prompt = "An academic poster with multiple text regions, some small and blurry."
-        else:
-            src_prompt = "An academic slide with title and content texts, some small and blurry."
-
+        # 让 PosterRefinerAgent 内部基于 style 和 plan_text_spans 构造 src/tar prompt，
+        # 这里仅设置清晰度阈值，保持调用接口简洁。
         refined = refiner.run(
             image=img,
-            src_prompt=src_prompt,
-            tar_prompt_for_text="The text in the image is sharp, high-contrast, and highly legible.",
-            clarity_threshold=10.0,  # 强制执行一次增强，便于观察效果
+            clarity_threshold=7.0,
         )
 
         refined.save(img_path)
