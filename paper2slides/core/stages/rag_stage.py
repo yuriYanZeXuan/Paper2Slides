@@ -284,42 +284,46 @@ async def run_rag_stage(base_dir: Path, config: Dict) -> Dict:
         from paper2slides.raganything.batch_parser import BatchParser
         from paper2slides.rag import RAG_PAPER_QUERIES
         
-        # Parse documents to generate markdown
-        batch_parser = BatchParser(
-            parser_type="mineru",
-            max_workers=4,
-            show_progress=True,
-            skip_installation_check=True,
-        )
-        
-        if path.is_file():
-            logger.info(f"Parsing file: {path.name}")
+        # 如果输入本身就是 markdown，则直接作为 RAG 的文本来源使用，跳过 MinerU 解析
+        if path.is_file() and path.suffix.lower() in {".md", ".markdown"}:
+            logger.info(f"Detected markdown input file: {path.name}, skip MinerU parsing")
+            markdown_paths = [str(path)]
         else:
-            logger.info(f"Parsing directory: {path.name}")
-        
-        parse_result = batch_parser.process_batch(
-            file_paths=[input_path],
-            output_dir=str(output_dir),
-            parse_method="auto",
-            recursive=True,
-        )
-        
-        logger.info(f"  Parsing completed: {len(parse_result.successful_files)} successful")
-        
-        # Collect markdown files
-        md_files = list(output_dir.rglob("*.md"))
-        markdown_paths = [str(f) for f in md_files]
+            # Parse documents to generate markdown（使用 MinerU / Docling）
+            batch_parser = BatchParser(
+                parser_type="mineru",
+                max_workers=4,
+                show_progress=True,
+                skip_installation_check=True,
+            )
+            
+            if path.is_file():
+                logger.info(f"Parsing file: {path.name}")
+            else:
+                logger.info(f"Parsing directory: {path.name}")
+            
+            parse_result = batch_parser.process_batch(
+                file_paths=[input_path],
+                output_dir=str(output_dir),
+                parse_method="auto",
+                recursive=True,
+            )
+            
+            logger.info(f"  Parsing completed: {len(parse_result.successful_files)} successful")
+            
+            # Collect markdown files
+            md_files = list(output_dir.rglob("*.md"))
+            markdown_paths = [str(f) for f in md_files]
         
         if not markdown_paths:
-            raise ValueError("No markdown files generated")
+            raise ValueError("No markdown files generated or provided")
         
-        logger.info(f"  Found {len(markdown_paths)} markdown file(s)")
+        logger.info(f"  Using {len(markdown_paths)} markdown file(s)")
         
         # Use OpenAI to query markdown content directly
         logger.info("")
         logger.info(f"Running queries with GPT-4o and images ({content_type})...")
         
-        from openai import OpenAI
         from paper2slides.utils.api_utils import get_openai_client
         
         # Use centralized client wrapper
