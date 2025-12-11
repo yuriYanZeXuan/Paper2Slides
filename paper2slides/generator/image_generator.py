@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Optional
 from openai import OpenAI
 from diffusers import DiffusionPipeline, ZImagePipeline
+import torch
 from .config import GenerationInput
 from .content_planner import ContentPlan, Section
 from ..prompts.image_generation import (
