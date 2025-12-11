@@ -97,7 +97,8 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
     log_agent_info(agent, f"project={project_name}, base={base_dir}, config={config_dir}")
 
     # 2. 运行主流水线（从自动检测到的起始 stage 开始）
-    from paper2slides.core.pipeline import detect_start_stage
+    # detect_start_stage 定义在 paper2slides.core 包的 __init__ 中，而不是 pipeline.py
+    from paper2slides.core import detect_start_stage
 
     from_stage = detect_start_stage(base_dir, config_dir, config)
     if from_stage != "rag":
