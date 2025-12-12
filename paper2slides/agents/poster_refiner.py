@@ -55,9 +55,11 @@ class PosterRefinerAgent:
         self._llm_cfg = {
             "model": _TOOL_AGENT_MODEL,
             "api_key": os.getenv("RAG_LLM_API_KEY") or os.getenv("GEMINI_TEXT_KEY") or os.getenv("RUNWAY_API_KEY") or os.getenv("OPENAI_API_KEY") or "",
-            "base_url": os.getenv("RAG_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("RUNWAY_API_BASE") or "",
+            # Qwen-Agent 里 OpenAI 兼容服务端字段名为 model_server（见 qwen_agent.llm.get_chat_model）
+            "model_server": os.getenv("RAG_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("RUNWAY_API_BASE") or "",
         }
         assert self._llm_cfg["api_key"], "No API key found for tool agent (RAG_LLM_API_KEY/GEMINI_TEXT_KEY/RUNWAY_API_KEY/OPENAI_API_KEY)"
+        assert self._llm_cfg["model_server"], "No model_server found for tool agent (RAG_LLM_BASE_URL/OPENAI_BASE_URL/RUNWAY_API_BASE)"
         self._function_list = [
             "poster_text_score",
             "poster_text_grounding",
@@ -131,7 +133,21 @@ class PosterRefinerAgent:
         assert max_rounds > 0
         assert bbox_limit > 0
 
-        os.environ["QWEN_AGENT_MAX_LLM_CALL_PER_RUN"] = str(20)
+        # 硬上限来自 qwen_agent.settings.MAX_LLM_CALL_PER_RUN（默认 20，可能不足以跑完多轮闭环）。
+        # 这里按 max_rounds/bbox_limit 估算需要的 LLM call budget，并同时设置 env + settings 变量：
+        # - env：供依赖 os.getenv 的场景
+        # - settings：供已导入 settings 的运行时读取
+        tool_calls_per_round = 3 + 2 * int(bbox_limit)  # score + grounding + bbox*(match+patch_flowedit) + score_after
+        est_tool_calls = int(max_rounds) * tool_calls_per_round + 5
+        llm_budget = max(20, 2 * est_tool_calls)  # 2x safety factor
+        os.environ["QWEN_AGENT_MAX_LLM_CALL_PER_RUN"] = str(llm_budget)
+        try:
+            from qwen_agent import settings as qwen_settings
+
+            qwen_settings.MAX_LLM_CALL_PER_RUN = int(llm_budget)
+        except Exception:
+            # 若运行环境不允许/版本差异，至少 env 已设置
+            pass
 
         tool_assistant = Assistant(
             llm=self._llm_cfg,
