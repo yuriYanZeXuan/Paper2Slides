@@ -28,6 +28,7 @@ from paper2slides.utils import setup_logging, load_json
 from paper2slides.utils.path_utils import normalize_input_path, get_project_name, parse_style
 from paper2slides.core.paths import get_base_dir, get_config_dir, get_plan_checkpoint
 from paper2slides.core.pipeline import run_pipeline, STAGES
+from paper2slides.core.state import load_state
 from paper2slides.utils.agent_logging import (
     log_agent_start,
     log_agent_info,
@@ -148,6 +149,14 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
         logger.info(f"Reusing existing checkpoints, starting from: {from_stage}")
 
     asyncio.run(run_pipeline(base_dir, config_dir, config, from_stage))
+
+    # 如果主流水线任一 stage 失败，则不继续做后续 plan/output_dir/refinement，避免二次异常
+    state = load_state(config_dir)
+    if state:
+        stages = state.get("stages", {}) or {}
+        if any(stages.get(s) == "failed" for s in STAGES):
+            log_agent_warning(agent, f"pipeline failed, skip refinement (error={state.get('error')})")
+            return
 
     # 2.5 加载本次生成使用的内容规划（checkpoint_plan.json），准备用于文字精准对齐
     plan_text_spans: List[Dict[str, Any]] = []

@@ -17,44 +17,6 @@ from typing import Optional, Any, Dict, List, Union
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def _normalize_openai_compatible_base_url(base_url: Optional[str]) -> Optional[str]:
-    """Normalize OpenAI-compatible base_url.
-
-    Most OpenAI-compatible servers expect base_url ending with `/v1`.
-    If the given url doesn't contain `/v1`, append it.
-    """
-    if not base_url:
-        return base_url
-    base_url = base_url.strip()
-    if not base_url:
-        return base_url
-
-    # Runway/devops gateways commonly expose OpenAI-compatible endpoints under `/openai/*`
-    # and may NOT support `/openai/v1/*`. If user provides `/openai/v1`, strip the `/v1`.
-    parsed = urlparse(base_url)
-    path = (parsed.path or "").rstrip("/")
-    parts = [p for p in path.split("/") if p]
-    for i in range(len(parts) - 1):
-        if parts[i] == "openai" and parts[i + 1] == "v1":
-            new_parts = parts[: i + 1] + parts[i + 2 :]
-            new_path = "/" + "/".join(new_parts) if new_parts else ""
-            normalized = urlunparse(parsed._replace(path=new_path))
-            return normalized.rstrip("/")
-
-    # Already contains /v1 somewhere in path -> keep
-    if "/v1" in path.split("/"):
-        return base_url.rstrip("/")
-
-    # Special-case: some gateways expose OpenAI-compatible endpoints under `/openai/*`
-    # (e.g. `/openai/chat/completions`), and appending `/v1` would break routing.
-    if "/openai" in path.split("/"):
-        return base_url.rstrip("/")
-
-    # Append /v1 to path
-    new_path = (path + "/v1") if path else "/v1"
-    normalized = urlunparse(parsed._replace(path=new_path))
-    return normalized.rstrip("/")
-
 def load_env_api_key(key_type: str = "text") -> str:
     """
     Load API key from environment variables with fallback support.
@@ -139,17 +101,37 @@ class CustomHTTPClient:
             def __init__(self, client):
                 self.client = client
 
+            def _looks_like_azure_openai(self, base_url: str) -> bool:
+                """
+                Heuristically detect Azure OpenAI style endpoints that require api-version.
+                Examples:
+                - https://{resource}.openai.azure.com/openai/deployments/{deployment}
+                - https://{resource}.openai.azure.com/openai
+                """
+                try:
+                    parsed = urlparse(base_url)
+                except Exception:
+                    return False
+                host = (parsed.netloc or "").lower()
+                path = (parsed.path or "").lower()
+                if host.endswith(".openai.azure.com"):
+                    return True
+                if "/openai/deployments" in path:
+                    return True
+                return False
+
+            def _with_api_version(self, url: str, api_version: str) -> str:
+                if "api-version=" in url:
+                    return url
+                return f"{url}{'&' if '?' in url else '?'}api-version={api_version}"
+
             def create(self, model: str, messages: List[Dict], **kwargs) -> Any:
                 # Determine endpoint based on model type or URL pattern
                 url = f"{self.client.base_url}/chat/completions"
                 
-                # Special handling for internal gateways if needed
-                if "runway" in self.client.base_url or "devops" in self.client.base_url:
-                     if "?" not in url:
-                         url += "?api-version=2024-12-01-preview"
-
                 headers = {
                     "api-key": self.client.api_key,
+                    "Authorization": f"Bearer {self.client.api_key}",
                     "Content-Type": "application/json",
                 }
                 
@@ -162,24 +144,38 @@ class CustomHTTPClient:
                 if "extra_body" in payload:
                      del payload["extra_body"]
 
-                try:
-                    response = requests.post(url, headers=headers, json=payload, timeout=120)
-                    response.raise_for_status()
-                    data = response.json()
-                    
-                    class Message:
-                        def __init__(self, content): self.content = content
-                    class Choice:
-                        def __init__(self, message_content): self.message = Message(message_content)
-                    class Response:
-                        def __init__(self, choices_data):
-                            self.choices = [Choice(c.get("message", {}).get("content", "")) for c in choices_data]
-                    
-                    return Response(data.get("choices", []))
+                api_version = os.getenv("AZURE_OPENAI_API_VERSION") or "2024-12-01-preview"
+                request_urls: List[str] = [url]
+                # Only attach api-version for Azure OpenAI-like endpoints.
+                if self._looks_like_azure_openai(self.client.base_url):
+                    request_urls = [self._with_api_version(url, api_version)]
 
-                except Exception as e:
-                    logger.error(f"Custom HTTP Chat Completion failed: {e}")
-                    raise
+                last_exc: Exception | None = None
+                for req_url in request_urls:
+                    try:
+                        response = requests.post(req_url, headers=headers, json=payload, timeout=120)
+                        # If api-version was accidentally added to a non-Azure gateway, retry without it on 404.
+                        if response.status_code == 404 and "api-version=" in req_url and req_url != url:
+                            response = requests.post(url, headers=headers, json=payload, timeout=120)
+                        response.raise_for_status()
+                        data = response.json()
+                    
+                        class Message:
+                            def __init__(self, content): self.content = content
+                        class Choice:
+                            def __init__(self, message_content): self.message = Message(message_content)
+                        class Response:
+                            def __init__(self, choices_data):
+                                self.choices = [Choice(c.get("message", {}).get("content", "")) for c in choices_data]
+                    
+                        return Response(data.get("choices", []))
+
+                    except Exception as e:
+                        last_exc = e
+                        continue
+
+                logger.error(f"Custom HTTP Chat Completion failed: {last_exc}")
+                raise last_exc
 
     class Embeddings:
         def __init__(self, client):
@@ -187,18 +183,26 @@ class CustomHTTPClient:
 
         def create(self, input: Union[str, List[str]], model: str, **kwargs) -> Any:
             url = f"{self.client.base_url}/embeddings"
-            if "runway" in self.client.base_url or "devops" in self.client.base_url:
-                url += "?api-version=2024-12-01-preview"
 
             headers = {
                 "api-key": self.client.api_key,
+                "Authorization": f"Bearer {self.client.api_key}",
                 "Content-Type": "application/json",
             }
             
             payload = {"model": model, "input": input, **kwargs}
 
             try:
-                response = requests.post(url, headers=headers, json=payload, timeout=60)
+                # Same api-version handling policy as chat completions: only for Azure OpenAI-like endpoints,
+                # and retry without api-version on 404.
+                api_version = os.getenv("AZURE_OPENAI_API_VERSION") or "2024-12-01-preview"
+                parsed = urlparse(self.client.base_url)
+                is_azure_like = (parsed.netloc or "").lower().endswith(".openai.azure.com") or ("/openai/deployments" in (parsed.path or "").lower())
+                req_url = f"{url}{'&' if '?' in url else '?'}api-version={api_version}" if is_azure_like else url
+
+                response = requests.post(req_url, headers=headers, json=payload, timeout=60)
+                if response.status_code == 404 and "api-version=" in req_url and req_url != url:
+                    response = requests.post(url, headers=headers, json=payload, timeout=60)
                 response.raise_for_status()
                 data = response.json()
                 
@@ -226,7 +230,6 @@ def get_openai_client(
     """
     final_api_key = api_key or load_env_api_key(key_type)
     final_base_url = base_url or get_api_base_url(key_type)
-    final_base_url = _normalize_openai_compatible_base_url(final_base_url)
     
     if not final_api_key:
         raise ValueError(f"No API key found for {key_type}")
