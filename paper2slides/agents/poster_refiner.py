@@ -1,5 +1,3 @@
-import base64
-import io
 import os
 import json
 from typing import List, Tuple, Dict, Any
@@ -11,22 +9,18 @@ from diffusers import ZImagePipeline
 
 from paper2slides.utils.logging import get_logger
 from paper2slides.agents.tools.zimage_flowedit_core import FlowEditZImage
-from paper2slides.agents.tools.poster_text_score import score_poster_text_clarity_with_vlm
-from paper2slides.agents.tools.poster_text_grounding import ground_poster_text_regions_with_vlm
-from paper2slides.utils.agent_logging import (
-    log_agent_start,
-    log_agent_info,
-    log_agent_success,
-    log_agent_warning,
-)
+# Ensure tools are imported so @register_tool side-effects run (tool registry is populated).
+from paper2slides.agents.tools import poster_text_score as _poster_text_score_tool  # noqa: F401
+from paper2slides.agents.tools import poster_text_grounding as _poster_text_grounding_tool  # noqa: F401
+from paper2slides.agents.tools import zimage_flowedit_tool as _zimage_flowedit_tool  # noqa: F401
+from paper2slides.agents.tools.poster_text_match import PosterTextMatch
+from qwen_agent.agents import Assistant
+from paper2slides.utils.agent_logging import *
 from paper2slides.utils.agent_artifact_logging import (
     save_before_after_image,
     save_json_log,
     get_default_log_root,
 )
-from paper2slides.utils.api_utils import get_openai_client
-
-
 logger = get_logger(__name__)
 
 
@@ -35,7 +29,7 @@ BBox = Tuple[int, int, int, int]
 
 _AGENT_NAME = "poster_refiner"
 _LOG_ROOT = get_default_log_root(_AGENT_NAME)
-_TEXT_MATCH_MODEL = os.getenv("POSTER_TEXT_MATCH_MODEL", "gpt-4o")
+_TOOL_AGENT_MODEL = os.getenv("POSTER_TOOL_AGENT_MODEL", "gpt-4o")
 
 class PosterRefinerAgent:
     """Agent that refines poster small-text regions using Z-Image FlowEdit.
@@ -54,12 +48,31 @@ class PosterRefinerAgent:
         device: str = None,
         style_name: str = "academic",
         plan_text_spans: List[Dict[str, Any]] | None = None,
+        plan_text_spans_path: str | None = None,
     ) -> None:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.style_name = style_name or "academic"
         # 每个元素形如 {"id": ..., "section_id": ..., "section_title": ..., "text": ...}
         self.plan_text_spans: List[Dict[str, Any]] = list(plan_text_spans or [])
-        self._vlm_client = None
+        self.plan_text_spans_path: str | None = plan_text_spans_path
+        # Qwen-Agent 工具调度 Agent：用于自主决定是否需要继续 grounding/refine
+        # 注意：这里使用 OpenAI 兼容的配置（api_key/base_url/model），以适配项目现有网关。
+        llm_cfg = {
+            "model": _TOOL_AGENT_MODEL,
+            "api_key": os.getenv("RAG_LLM_API_KEY") or os.getenv("GEMINI_TEXT_KEY") or os.getenv("RUNWAY_API_KEY") or os.getenv("OPENAI_API_KEY") or "",
+            "base_url": os.getenv("RAG_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("RUNWAY_API_BASE") or "",
+        }
+        assert llm_cfg["api_key"], "No API key found for tool agent (RAG_LLM_API_KEY/GEMINI_TEXT_KEY/RUNWAY_API_KEY/OPENAI_API_KEY)"
+        self._tool_assistant = Assistant(
+            llm=llm_cfg,
+            function_list=["poster_text_score", "poster_text_grounding", "zimage_flowedit"],
+            system_message=(
+                "You are a tool-using agent for refining poster text clarity. "
+                "For clarity decision, ONLY use poster_text_score and poster_text_grounding. "
+                "Do NOT call zimage_flowedit unless explicitly asked. "
+                "Output ONLY JSON."
+            ),
+        )
 
         log_agent_start("poster_refiner_agent")
         logger.info(f"Loading Z-Image pipeline {zimage_model_name} on {self.device} ...")
@@ -97,191 +110,15 @@ class PosterRefinerAgent:
             "without changing the overall composition, fonts, or colors outside this region."
         )
 
-    def _get_vlm_client(self):
-        if self._vlm_client is None:
-            self._vlm_client = get_openai_client(key_type="text")
-        return self._vlm_client
-
-    def _encode_patch_to_base64(self, patch: Image.Image) -> str:
-        buf = io.BytesIO()
-        patch.save(buf, format="PNG")
-        return base64.b64encode(buf.getvalue()).decode("utf-8")
-
-    def _match_text_for_patch(
-        self,
-        patch: Image.Image,
-        bbox: BBox,
-        max_candidates: int = 40,
-    ) -> Tuple[str | None, Dict[str, Any] | None]:
-        """使用 GPT-4o 在 plan_text_spans 中为该 patch 匹配最相关的文字内容."""
-        if not self.plan_text_spans:
-            return None, None
-
-        client = self._get_vlm_client()
-        w, h = patch.size
-
-        # 截断候选，以避免 prompt 过长
-        candidates = self.plan_text_spans[:max_candidates]
-        candidates_str_lines = []
-        for idx, span in enumerate(candidates, start=1):
-            text = (span.get("text") or "").replace("\n", " ").strip()
-            if len(text) > 200:
-                text = text[:200] + "..."
-            candidates_str_lines.append(f"{idx}. {text}")
-        candidates_str = "\n".join(candidates_str_lines)
-
-        b64 = self._encode_patch_to_base64(patch)
-
-        system_prompt = (
-            "You are an expert at reading small text on academic posters and matching it to candidate text spans. "
-            "Your task is to find which candidate text best corresponds to the text appearing inside the given image patch."
-        )
-        user_text = (
-            "Here is a small image patch from a poster. First, read the text inside the patch.\n"
-            "Then, from the candidate list below, choose the SINGLE candidate that best matches "
-            "the text in this patch (based on semantic content, not style).\n\n"
-            "Return ONLY a JSON object of the form:\n"
-            "{\n"
-            '  \"matched_index\": <integer index in [1..N]> or null if no good match,\n'
-            '  \"matched_text\": \"the chosen candidate text or empty string\"\n'
-            "}\n\n"
-            "Candidate text spans:\n"
-            f"{candidates_str}\n"
-        )
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": user_text},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}"},
-                    },
-                ],
-            },
-        ]
-
-        matched_index: int | None = None
-        matched_text: str | None = None
-        try:
-            response = client.chat.completions.create(
-                model=_TEXT_MATCH_MODEL,
-                messages=messages,
-                temperature=0.0,
-                response_format={"type": "json_object"},
-            )
-            content = response.choices[0].message.content
-            data = json.loads(content)
-            raw_idx = data.get("matched_index")
-            raw_text = data.get("matched_text")
-            if isinstance(raw_idx, int) and 1 <= raw_idx <= len(candidates):
-                matched_index = raw_idx
-                matched_span = candidates[matched_index - 1]
-                matched_text = str(raw_text or matched_span.get("text") or "")
-                meta = {
-                    "matched_index": matched_index,
-                    "matched_span": matched_span,
-                    "bbox": [int(v) for v in bbox],
-                    "patch_size": [int(w), int(h)],
-                }
-            else:
-                matched_index = None
-                meta = {
-                    "matched_index": None,
-                    "bbox": [int(v) for v in bbox],
-                    "patch_size": [int(w), int(h)],
-                }
-        except Exception as e:
-            log_agent_warning(
-                _AGENT_NAME,
-                f"text matching VLM call failed for bbox={bbox}: {e}",
-            )
-            matched_index = None
-            matched_text = None
-            meta = {
-                "matched_index": None,
-                "error": str(e),
-                "bbox": [int(v) for v in bbox],
-                "patch_size": [int(w), int(h)],
-            }
-
-        # 记录匹配日志
-        save_json_log(
-            agent_name=_AGENT_NAME,
-            func_name="match_text_for_patch",
-            payload=meta,
-            log_root=_LOG_ROOT,
-        )
-
-        if matched_index is None or not matched_text:
-            return None, meta
-
-        return matched_text, meta
-
-    # ============ 占位 / 简化实现部分（后续可替换为真实 VLM & grounding） ============
-    def assess_clarity(self, image: Image.Image) -> float:
-        """使用 VLM 评估文字清晰度.
-
-        当前实现：调用 `paper2slides.agents.tools.poster_text_score` 的 VLM 打分实现。
-        使用 assert 对返回值进行最小合法性校验，便于快速定位异常。
-        """
-
-        score = float(score_poster_text_clarity_with_vlm(image))
-        assert 0.0 <= score <= 10.0, f"clarity score out of range: {score}"
-
-        # 将打分结果记录为 json，方便后续调试多轮闭环
-        save_json_log(
-            agent_name=_AGENT_NAME,
-            func_name="assess_clarity",
-            payload={
-                "score": float(score),
-            },
-            log_root=_LOG_ROOT,
-        )
-        return score
-
-    def ground_small_text(self, image: Image.Image) -> List[BBox]:
-        """定位需要润色的小文字区域.
-
-        当前实现：调用 `paper2slides.agents.tools.poster_text_grounding` 的 VLM grounding 实现。
-        使用 assert 对返回值进行最小合法性校验，便于快速定位异常。
-        """
-
-        w, h = image.size
-        bboxes = list(ground_poster_text_regions_with_vlm(image))
-        assert len(bboxes) > 0, "empty bboxes"
-        for b in bboxes:
-            assert isinstance(b, (list, tuple)) and len(b) == 4, f"invalid bbox: {b}"
-            x0, y0, x1, y1 = map(int, b)
-            assert 0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h, f"bbox out of bounds: {b}, image_size=({w},{h})"
-
-        # 可视化：在复制的图像上绘制 bbox，作为 "after" 图用于日志记录
-        vis_img = image.copy()
-        draw = ImageDraw.Draw(vis_img)
-        for (bx0, by0, bx1, by1) in bboxes:
-            draw.rectangle((bx0, by0, bx1, by1), outline="red", width=3)
-
-        save_before_after_image(
-            agent_name=_AGENT_NAME,
-            func_name="ground_small_text",
-            before_img=image,
-            after_img=vis_img,
-            log_root=_LOG_ROOT,
-        )
-
-        # 将 grounding 结果记录为 json
-        save_json_log(
-            agent_name=_AGENT_NAME,
-            func_name="ground_small_text",
-            payload={
-                "image_size": [int(w), int(h)],
-                "bboxes": [list(map(int, b)) for b in bboxes],
-            },
-            log_root=_LOG_ROOT,
-        )
-        return bboxes
+    # ============ VLM tools (via qwen_agent tool dispatch) ============
+    def _save_tmp_image_for_tool(self, image: Image.Image, tag: str) -> str:
+        """Save image into agent log root for tool consumption (tools take image_path)."""
+        assert isinstance(tag, str) and tag.strip()
+        tmp_dir = os.path.join(_LOG_ROOT, "tool_inputs")
+        os.makedirs(tmp_dir, exist_ok=True)
+        path = os.path.join(tmp_dir, f"{tag}.png")
+        image.save(path)
+        return path
 
     # ============ FlowEdit 增强 ============
     def refine_patch(
@@ -392,13 +229,68 @@ class PosterRefinerAgent:
         - 否则：ground -> patch refine -> stitch
         """
 
-        score = self.assess_clarity(image)
+        # 让 Qwen-Agent 自主调度工具：先打分，再按阈值决定是否 grounding
+        image_path = self._save_tmp_image_for_tool(image, tag="poster_tool_agent")
+        user_prompt = (
+            "Given a poster image at image_path, decide whether refinement is needed.\n"
+            "Rules:\n"
+            f"- First call tool poster_text_score(image_path) to get score in [0,10].\n"
+            f"- If score >= {float(clarity_threshold)}, reply with a JSON object: "
+            "{\"score\": <float>, \"should_refine\": false, \"bboxes\": []}\n"
+            f"- If score < {float(clarity_threshold)}, call tool poster_text_grounding(image_path) "
+            "to get bboxes, then reply with JSON: "
+            "{\"score\": <float>, \"should_refine\": true, \"bboxes\": [[x0,y0,x1,y1], ...]}\n"
+            "Return ONLY JSON."
+        )
+        messages = [{"role": "user", "content": f"image_path={image_path}\n\n{user_prompt}"}]
+
+        final_content: str | None = None
+        for chunk in self._tool_assistant.run(messages):
+            for msg in chunk:
+                if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
+                    final_content = msg["content"]
+        assert final_content, "Qwen-Agent did not produce assistant content"
+        result = json.loads(final_content)
+        assert isinstance(result, dict), f"agent final output must be json object, got: {type(result)}"
+
+        score = float(result["score"])
+        assert 0.0 <= score <= 10.0, f"clarity score out of range: {score}"
+        should_refine = bool(result.get("should_refine", False))
+        bboxes = list(result.get("bboxes") or [])
+
+        # 记录打分（保持与之前日志接口一致）
+        save_json_log(
+            agent_name=_AGENT_NAME,
+            func_name="assess_clarity",
+            payload={"score": float(score)},
+            log_root=_LOG_ROOT,
+        )
+
         log_agent_info("poster_refiner_agent", f"clarity score={score:.2f}")
-        if score >= clarity_threshold:
+        if not should_refine:
+            assert len(bboxes) == 0, "should_refine=false but bboxes provided"
             log_agent_info("poster_refiner_agent", "clarity good enough; skip refinement")
             return image
 
-        bboxes = self.ground_small_text(image)
+        w, h = image.size
+        vis_img = image.copy()
+        draw = ImageDraw.Draw(vis_img)
+        for (bx0, by0, bx1, by1) in bboxes:
+            draw.rectangle((bx0, by0, bx1, by1), outline="red", width=3)
+        save_before_after_image(
+            agent_name=_AGENT_NAME,
+            func_name="ground_small_text",
+            before_img=image,
+            after_img=vis_img,
+            log_root=_LOG_ROOT,
+        )
+        save_json_log(
+            agent_name=_AGENT_NAME,
+            func_name="ground_small_text",
+            payload={"image_size": [int(w), int(h)], "bboxes": [list(map(int, b)) for b in bboxes]},
+            log_root=_LOG_ROOT,
+        )
+
         log_agent_info("poster_refiner_agent", f"grounded {len(bboxes)} regions: {bboxes}")
 
         # 若未显式提供 src_prompt，则基于 style_name 构造
@@ -410,12 +302,23 @@ class PosterRefinerAgent:
             # 每个 bbox 尝试与计划文本做一次匹配，获得更精确的文字内容
             matched_text: str | None = None
             matched_meta: Dict[str, Any] | None = None
-            if self.plan_text_spans:
+            if self.plan_text_spans_path:
                 patch_for_match = image.crop(bbox)
-                matched_text, matched_meta = self._match_text_for_patch(
-                    patch_for_match,
-                    bbox=bbox,
+                patch_path = self._save_tmp_image_for_tool(patch_for_match, tag=f"patch_match_{idx}")
+                tool = PosterTextMatch()
+                out = tool.call(
+                    {
+                        "patch_image_path": patch_path,
+                        "bbox": [int(v) for v in bbox],
+                        "plan_text_spans_path": self.plan_text_spans_path,
+                        "max_candidates": 40,
+                        "agent_name": _AGENT_NAME,
+                        "log_root": str(_LOG_ROOT),
+                    }
                 )
+                data = json.loads(out)
+                matched_text = data.get("matched_text")
+                matched_meta = data.get("meta")
 
             if matched_text:
                 effective_tar_prompt = self._build_tar_prompt(matched_text)

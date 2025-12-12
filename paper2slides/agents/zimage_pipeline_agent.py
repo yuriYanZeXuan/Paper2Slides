@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import re
+import json
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -150,16 +151,22 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
 
     # 2.5 加载本次生成使用的内容规划（checkpoint_plan.json），准备用于文字精准对齐
     plan_text_spans: List[Dict[str, Any]] = []
-    try:
-        plan_ckpt = get_plan_checkpoint(config_dir)
-        if plan_ckpt.exists():
-            plan_data = load_json(plan_ckpt)
-            plan_text_spans = _build_plan_text_spans(plan_data)
-            log_agent_info(agent, f"loaded {len(plan_text_spans)} text spans from plan checkpoint")
-        else:
-            log_agent_warning(agent, f"plan checkpoint not found: {plan_ckpt}")
-    except Exception as e:
-        log_agent_warning(agent, f"failed to load plan checkpoint for text spans: {e}")
+    plan_ckpt = get_plan_checkpoint(config_dir)
+    if plan_ckpt.exists():
+        plan_data = load_json(plan_ckpt)
+        plan_text_spans = _build_plan_text_spans(plan_data)
+        log_agent_info(agent, f"loaded {len(plan_text_spans)} text spans from plan checkpoint")
+    else:
+        log_agent_warning(agent, f"plan checkpoint not found: {plan_ckpt}")
+    
+    # 2.6 将 plan_text_spans 落盘，供 poster_text_match tool 使用（方案 B：通过路径加载，避免把大候选塞进 tool 参数）
+    plan_text_spans_path: str | None = None
+    if plan_text_spans:
+        plan_text_spans_file = config_dir / "plan_text_spans.json"
+        with plan_text_spans_file.open("w", encoding="utf-8") as f:
+            json.dump(plan_text_spans, f, ensure_ascii=False, indent=2)
+        plan_text_spans_path = str(plan_text_spans_file)
+        log_agent_info(agent, f"saved plan_text_spans to {plan_text_spans_file}")
 
     # 3. 找到本次生成的输出图片目录
     output_dir = _find_latest_output_dir(config_dir)
@@ -181,7 +188,8 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
         zimage_model_name=zimage_model,
         device=args.device,
         style_name=style_type,
-        plan_text_spans=plan_text_spans,
+        plan_text_spans=[],  # 方案 B：不直接传大列表给 agent，交由 tool 通过路径加载
+        plan_text_spans_path=plan_text_spans_path,
     )
 
     for img_path in image_paths:
