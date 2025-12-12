@@ -171,9 +171,9 @@ class PosterTextMatch(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            "patch_image_path": {
+            "image_path": {
                 "type": "string",
-                "description": "Path to the patch image file.",
+                "description": "Path to the full poster image file. The tool will crop bbox as the patch.",
             },
             "bbox": {
                 "type": "array",
@@ -202,20 +202,21 @@ class PosterTextMatch(BaseTool):
                 "description": "Optional log root path for logging.",
             },
         },
-        "required": ["patch_image_path", "bbox", "plan_text_spans_path"],
+        "required": ["image_path", "bbox", "plan_text_spans_path"],
     }
 
     def call(self, params, **kwargs) -> str:
         params = self._verify_json_format_args(params)
 
-        patch_image_path = params["patch_image_path"]
+        image_path = params["image_path"]
         bbox = params["bbox"]
         plan_text_spans_path = params["plan_text_spans_path"]
 
         assert isinstance(bbox, (list, tuple)) and len(bbox) == 4, f"invalid bbox: {bbox}"
         bbox_t: BBox = tuple(map(int, bbox))  # type: ignore[assignment]
 
-        patch = Image.open(patch_image_path).convert("RGB")
+        full_img = Image.open(image_path).convert("RGB")
+        patch = full_img.crop(bbox_t)
         plan_text_spans = _load_plan_text_spans(plan_text_spans_path)
 
         max_candidates = int(params.get("max_candidates", 40))

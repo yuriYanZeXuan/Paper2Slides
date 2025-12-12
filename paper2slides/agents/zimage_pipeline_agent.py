@@ -201,6 +201,8 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
         refined = refiner.run(
             image=img,
             clarity_threshold=7.0,
+            max_rounds=3,
+            bbox_limit=5,
         )
 
         refined.save(img_path)

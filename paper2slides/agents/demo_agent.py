@@ -58,11 +58,12 @@ def main() -> None:
     # 3. 构造 PosterRefinerAgent，并进行小文字区域增强
     agent = PosterRefinerAgent(device=device)
 
+    # 新版 PosterRefinerAgent 为 agent-driven 闭环：内部使用工具调度（score/ground/match/patch_flowedit）
     refined = agent.run(
         image=base_image,
-        src_prompt=src_prompt,
-        tar_prompt_for_text="The small text in the lower area is very sharp and high-resolution, easy to read.",
         clarity_threshold=10.0,  # 强制执行一次增强，方便可视化
+        max_rounds=1,
+        bbox_limit=5,
     )
 
     # 4. 保存增强后的结果
