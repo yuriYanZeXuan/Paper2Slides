@@ -11,6 +11,8 @@ from diffusers import ZImagePipeline
 
 from paper2slides.utils.logging import get_logger
 from paper2slides.agents.tools.zimage_flowedit_core import FlowEditZImage
+from paper2slides.agents.tools.poster_text_score import score_poster_text_clarity_with_vlm
+from paper2slides.agents.tools.poster_text_grounding import ground_poster_text_regions_with_vlm
 from paper2slides.utils.agent_logging import (
     log_agent_start,
     log_agent_info,
@@ -222,12 +224,12 @@ class PosterRefinerAgent:
     def assess_clarity(self, image: Image.Image) -> float:
         """使用 VLM 评估文字清晰度.
 
-        当前实现是占位: 简单返回 1.0~10.0 的常数, 方便集成和调试.
-        后续可替换为真实的 Qwen-VL 调用。
+        当前实现：调用 `paper2slides.agents.tools.poster_text_score` 的 VLM 打分实现。
+        使用 assert 对返回值进行最小合法性校验，便于快速定位异常。
         """
 
-        # TODO: 接入 Qwen-VL / 其他 VLM, 根据 prompt + 图像返回评分
-        score = 5.0
+        score = float(score_poster_text_clarity_with_vlm(image))
+        assert 0.0 <= score <= 10.0, f"clarity score out of range: {score}"
 
         # 将打分结果记录为 json，方便后续调试多轮闭环
         save_json_log(
@@ -235,7 +237,6 @@ class PosterRefinerAgent:
             func_name="assess_clarity",
             payload={
                 "score": float(score),
-                "note": "dummy implementation; replace with real VLM score.",
             },
             log_root=_LOG_ROOT,
         )
@@ -244,18 +245,17 @@ class PosterRefinerAgent:
     def ground_small_text(self, image: Image.Image) -> List[BBox]:
         """定位需要润色的小文字区域.
 
-        当前实现是占位: 简单返回全图中心附近的一个 bbox.
-        后续可替换为 grounding DINO + OCR / VLM grounded bbox.
+        当前实现：调用 `paper2slides.agents.tools.poster_text_grounding` 的 VLM grounding 实现。
+        使用 assert 对返回值进行最小合法性校验，便于快速定位异常。
         """
 
         w, h = image.size
-        cx, cy = w // 2, h // 2
-        bw, bh = w // 3, h // 6
-        x0 = max(cx - bw // 2, 0)
-        y0 = max(cy - bh // 2, 0)
-        x1 = min(cx + bw // 2, w)
-        y1 = min(cy + bh // 2, h)
-        bboxes = [(x0, y0, x1, y1)]
+        bboxes = list(ground_poster_text_regions_with_vlm(image))
+        assert len(bboxes) > 0, "empty bboxes"
+        for b in bboxes:
+            assert isinstance(b, (list, tuple)) and len(b) == 4, f"invalid bbox: {b}"
+            x0, y0, x1, y1 = map(int, b)
+            assert 0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h, f"bbox out of bounds: {b}, image_size=({w},{h})"
 
         # 可视化：在复制的图像上绘制 bbox，作为 "after" 图用于日志记录
         vis_img = image.copy()
