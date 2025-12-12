@@ -35,6 +35,11 @@ def _normalize_openai_compatible_base_url(base_url: Optional[str]) -> Optional[s
     if "/v1" in path.split("/"):
         return base_url.rstrip("/")
 
+    # Special-case: some gateways expose OpenAI-compatible endpoints under `/openai/*`
+    # (e.g. `/openai/chat/completions`), and appending `/v1` would break routing.
+    if "/openai" in path.split("/"):
+        return base_url.rstrip("/")
+
     # Append /v1 to path
     new_path = (path + "/v1") if path else "/v1"
     normalized = urlunparse(parsed._replace(path=new_path))
