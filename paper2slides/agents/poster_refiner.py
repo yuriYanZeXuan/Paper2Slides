@@ -39,6 +39,26 @@ def _normalize_model_server_for_qwen_agent(url: str) -> str:
         return u
     return u + "/v1"
 
+def _append_debug_ndjson(message: str, data: dict, *, hypothesis_id: str) -> None:
+    """Debug-mode instrumentation. Writes NDJSON to local debug log path.
+
+    Note: In server runtime, this may not be accessible; we also persist key info via save_json_log.
+    """
+    try:
+        payload = {
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": hypothesis_id,
+            "location": "paper2slides/agents/poster_refiner.py",
+            "message": message,
+            "data": data,
+            "timestamp": int(__import__("time").time() * 1000),
+        }
+        with open("/Users/yanzexuan/code/.cursor/debug.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
 class PosterRefinerAgent:
     """PosterRefinerAgent (agent-driven).
 
@@ -177,6 +197,17 @@ class PosterRefinerAgent:
         src_prompt = self._build_src_prompt()
 
         # 记录本次 run 的上下文，便于 server 端排查
+        _append_debug_ndjson(
+            "run_context_prepared",
+            {
+                "model_type": self._llm_cfg.get("model_type"),
+                "model": self._llm_cfg.get("model"),
+                "model_server": self._llm_cfg.get("model_server"),
+                "max_rounds": int(max_rounds),
+                "bbox_limit": int(bbox_limit),
+            },
+            hypothesis_id="A",
+        )
         save_json_log(
             agent_name=_AGENT_NAME,
             func_name="run_context",
@@ -191,6 +222,12 @@ class PosterRefinerAgent:
                 "zimage_model_name": self.zimage_model_name,
                 "device": self.device,
                 "work_dir": work_dir,
+                # 不记录 api_key，避免泄露；仅记录与 404 相关的 url/配置
+                "llm_cfg_public": {
+                    "model_type": self._llm_cfg.get("model_type"),
+                    "model": self._llm_cfg.get("model"),
+                    "model_server": self._llm_cfg.get("model_server"),
+                },
             },
             log_root=_LOG_ROOT,
         )
