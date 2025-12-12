@@ -12,6 +12,9 @@ Env vars used:
 Usage (on server):
   python dev/probe_llm_endpoint.py
 
+If env vars are not exported in your shell, this script will try to load
+`Paper2Slides/paper2slides/.env` automatically (project example location).
+
 Optional:
   PROBE_MODEL=gpt-4o
   PROBE_API_VERSION=2024-12-01-preview
@@ -19,12 +22,29 @@ Optional:
 
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import requests
 
 
+def _try_load_dotenv() -> None:
+    """Best-effort load .env without overriding existing env."""
+    try:
+        from dotenv import load_dotenv  # type: ignore
+    except Exception:
+        return
+
+    # Project keeps example env at paper2slides/.env.example, and user placed env at paper2slides/.env
+    project_root = Path(__file__).resolve().parents[1]
+    env_path = project_root / "paper2slides" / ".env"
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path, override=False)
+
+
 def _get_base_and_key() -> Tuple[str, str]:
+    _try_load_dotenv()
+
     base = (
         os.getenv("RAG_LLM_BASE_URL")
         or os.getenv("OPENAI_BASE_URL")
@@ -39,9 +59,15 @@ def _get_base_and_key() -> Tuple[str, str]:
         or ""
     ).strip()
     if not base:
-        raise SystemExit("Missing base url env: set RAG_LLM_BASE_URL / OPENAI_BASE_URL / RUNWAY_API_BASE")
+        raise SystemExit(
+            "Missing base url env: set RAG_LLM_BASE_URL / OPENAI_BASE_URL / RUNWAY_API_BASE "
+            "(or put RUNWAY_API_BASE into paper2slides/.env)"
+        )
     if not key:
-        raise SystemExit("Missing api key env: set RAG_LLM_API_KEY / OPENAI_API_KEY / GEMINI_TEXT_KEY / RUNWAY_API_KEY")
+        raise SystemExit(
+            "Missing api key env: set RAG_LLM_API_KEY / OPENAI_API_KEY / GEMINI_TEXT_KEY / RUNWAY_API_KEY "
+            "(or put RUNWAY_API_KEY into paper2slides/.env)"
+        )
     return base.rstrip("/"), key
 
 
@@ -91,6 +117,7 @@ def main() -> None:
     print("RAG_LLM_BASE_URL=", os.getenv("RAG_LLM_BASE_URL"))
     print("OPENAI_BASE_URL=", os.getenv("OPENAI_BASE_URL"))
     print("RUNWAY_API_BASE=", os.getenv("RUNWAY_API_BASE"))
+    print("LLM_MODEL=", os.getenv("LLM_MODEL"))
 
 
 if __name__ == "__main__":
