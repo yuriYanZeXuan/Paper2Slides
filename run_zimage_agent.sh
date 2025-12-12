@@ -9,4 +9,7 @@ python -m paper2slides.agents.zimage_pipeline_agent \
   --input /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/PosterGen/data/Object_Pose_Estimation_with_Statistical_Guarantees_Conformal_Keypoint_Detection_and_Geometric_Uncertainty_Propagation/paper.pdf \
   --output poster \
   --style academic \
-  --local-image-model "${LOCAL_IMAGE_MODEL}"
+  --local-image-model "${LOCAL_IMAGE_MODEL}" \
+  --fast \
+  --device cuda \
+
