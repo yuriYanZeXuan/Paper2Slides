@@ -85,8 +85,13 @@ def main() -> None:
     base, key = _get_base_and_key()
     model = (os.getenv("PROBE_MODEL") or "gpt-4o").strip()
     api_version = (os.getenv("PROBE_API_VERSION") or "2024-12-01-preview").strip()
+    # Some gateways expose Azure-style endpoints at the domain root (without the trailing /openai).
+    base_root = base
+    if base_root.rstrip("/").endswith("/openai"):
+        base_root = base_root.rstrip("/")[: -len("/openai")]
 
     print("Base URL:", base)
+    print("Base root:", base_root)
     print("Model:", model)
     print("API version:", api_version)
     print("---")
@@ -107,6 +112,12 @@ def main() -> None:
     candidates.append((base + f"/openai/deployments/{model}/chat/completions", {"api-key": key}, {"api-version": api_version}))
     candidates.append((base + "/openai/deployments/gpt-4o/chat/completions", {"api-key": key}, {"api-version": api_version}))
     candidates.append((base + "/openai/deployments/gpt-4o-mini/chat/completions", {"api-key": key}, {"api-version": api_version}))
+    # Azure deployments style at domain root
+    candidates.append((base_root + f"/openai/deployments/{model}/chat/completions", {"api-key": key}, {"api-version": api_version}))
+    candidates.append((base_root + "/openai/deployments/gpt-4o/chat/completions", {"api-key": key}, {"api-version": api_version}))
+    candidates.append((base_root + "/openai/deployments/gpt-4o-mini/chat/completions", {"api-key": key}, {"api-version": api_version}))
+    # Non-deployment Azure-style chat at domain root
+    candidates.append((base_root + "/openai/chat/completions", {"api-key": key}, {"api-version": api_version}))
 
     for i, (url, headers, params) in enumerate(candidates, start=1):
         code, txt = _req(url, headers=headers, params=params, body=body)
