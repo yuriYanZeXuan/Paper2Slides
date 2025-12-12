@@ -10,11 +10,35 @@ import sys
 import json
 import logging
 import requests
+from urllib.parse import urlparse, urlunparse
 from pathlib import Path
 from typing import Optional, Any, Dict, List, Union
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+def _normalize_openai_compatible_base_url(base_url: Optional[str]) -> Optional[str]:
+    """Normalize OpenAI-compatible base_url.
+
+    Most OpenAI-compatible servers expect base_url ending with `/v1`.
+    If the given url doesn't contain `/v1`, append it.
+    """
+    if not base_url:
+        return base_url
+    base_url = base_url.strip()
+    if not base_url:
+        return base_url
+
+    # Already contains /v1 somewhere in path -> keep
+    parsed = urlparse(base_url)
+    path = (parsed.path or "").rstrip("/")
+    if "/v1" in path.split("/"):
+        return base_url.rstrip("/")
+
+    # Append /v1 to path
+    new_path = (path + "/v1") if path else "/v1"
+    normalized = urlunparse(parsed._replace(path=new_path))
+    return normalized.rstrip("/")
 
 def load_env_api_key(key_type: str = "text") -> str:
     """
@@ -187,6 +211,7 @@ def get_openai_client(
     """
     final_api_key = api_key or load_env_api_key(key_type)
     final_base_url = base_url or get_api_base_url(key_type)
+    final_base_url = _normalize_openai_compatible_base_url(final_base_url)
     
     if not final_api_key:
         raise ValueError(f"No API key found for {key_type}")

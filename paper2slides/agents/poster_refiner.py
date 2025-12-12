@@ -29,6 +29,16 @@ _TOOL_AGENT_MODEL = os.getenv("POSTER_TOOL_AGENT_MODEL", "gpt-4o")
 _MAX_ROUNDS_DEFAULT = 3
 _BBOX_LIMIT_DEFAULT = 5
 
+def _normalize_model_server_for_qwen_agent(url: str) -> str:
+    """Qwen-Agent 的 oai 适配通常需要 model_server 指向 .../v1。"""
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return u
+    # if already has /v1 in path, keep
+    if "/v1" in u.split("/"):
+        return u
+    return u + "/v1"
+
 class PosterRefinerAgent:
     """PosterRefinerAgent (agent-driven).
 
@@ -53,10 +63,13 @@ class PosterRefinerAgent:
         # Qwen-Agent 工具调度 Agent：用于自主决定是否需要继续 grounding/refine
         # 注意：这里使用 OpenAI 兼容的配置（api_key/base_url/model），以适配项目现有网关。
         self._llm_cfg = {
+            "model_type": "oai",
             "model": _TOOL_AGENT_MODEL,
             "api_key": os.getenv("RAG_LLM_API_KEY") or os.getenv("GEMINI_TEXT_KEY") or os.getenv("RUNWAY_API_KEY") or os.getenv("OPENAI_API_KEY") or "",
             # Qwen-Agent 里 OpenAI 兼容服务端字段名为 model_server（见 qwen_agent.llm.get_chat_model）
-            "model_server": os.getenv("RAG_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("RUNWAY_API_BASE") or "",
+            "model_server": _normalize_model_server_for_qwen_agent(
+                os.getenv("RAG_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("RUNWAY_API_BASE") or ""
+            ),
         }
         assert self._llm_cfg["api_key"], "No API key found for tool agent (RAG_LLM_API_KEY/GEMINI_TEXT_KEY/RUNWAY_API_KEY/OPENAI_API_KEY)"
         assert self._llm_cfg["model_server"], "No model_server found for tool agent (RAG_LLM_BASE_URL/OPENAI_BASE_URL/RUNWAY_API_BASE)"
