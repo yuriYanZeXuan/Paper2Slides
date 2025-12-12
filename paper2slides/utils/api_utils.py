@@ -29,9 +29,19 @@ def _normalize_openai_compatible_base_url(base_url: Optional[str]) -> Optional[s
     if not base_url:
         return base_url
 
-    # Already contains /v1 somewhere in path -> keep
+    # Runway/devops gateways commonly expose OpenAI-compatible endpoints under `/openai/*`
+    # and may NOT support `/openai/v1/*`. If user provides `/openai/v1`, strip the `/v1`.
     parsed = urlparse(base_url)
     path = (parsed.path or "").rstrip("/")
+    parts = [p for p in path.split("/") if p]
+    for i in range(len(parts) - 1):
+        if parts[i] == "openai" and parts[i + 1] == "v1":
+            new_parts = parts[: i + 1] + parts[i + 2 :]
+            new_path = "/" + "/".join(new_parts) if new_parts else ""
+            normalized = urlunparse(parsed._replace(path=new_path))
+            return normalized.rstrip("/")
+
+    # Already contains /v1 somewhere in path -> keep
     if "/v1" in path.split("/"):
         return base_url.rstrip("/")
 
