@@ -5,6 +5,7 @@ from typing import List, Tuple, Dict, Any
 from PIL import Image
 
 from paper2slides.utils.logging import get_logger
+from paper2slides.utils.agent_output_parsing import parse_agent_final_json
 # Ensure tools are imported so @register_tool side-effects run (tool registry is populated).
 from paper2slides.agents.tools import poster_text_score as _poster_text_score_tool  # noqa: F401
 from paper2slides.agents.tools import poster_text_grounding as _poster_text_grounding_tool  # noqa: F401
@@ -28,16 +29,6 @@ _LOG_ROOT = get_default_log_root(_AGENT_NAME)
 _TOOL_AGENT_MODEL = os.getenv("POSTER_TOOL_AGENT_MODEL", "gpt-4o")
 _MAX_ROUNDS_DEFAULT = 3
 _BBOX_LIMIT_DEFAULT = 5
-
-def _normalize_model_server_for_qwen_agent(url: str) -> str:
-    """Qwen-Agent 的 oai 适配通常需要 model_server 指向 .../v1。"""
-    u = (url or "").strip().rstrip("/")
-    if not u:
-        return u
-    # if already has /v1 in path, keep
-    if "/v1" in u.split("/"):
-        return u
-    return u + "/v1"
 
 def _derive_azure_endpoint_from_base(url: str) -> str:
     """Derive AzureOpenAI azure_endpoint from a gateway base url.
@@ -147,6 +138,9 @@ class PosterRefinerAgent:
             "You can call tools to: score text clarity, locate unclear text regions, match patch text to plan spans, "
             "and apply FlowEdit to a bbox patch and paste it back.\n\n"
             "Rules:\n"
+            "- You MAY think/describe progress, but ONLY inside JSON string fields (e.g., in `thoughts` or within `history`).\n"
+            "- Your final assistant message content MUST be a single valid JSON object, with no extra text before/after.\n"
+            "- Do NOT wrap the final JSON in markdown fences.\n"
             "- You MUST keep track of the current working image_path after each edit.\n"
             "- Use poster_text_score to assess clarity. If score >= clarity_threshold, stop.\n"
             "- If score < clarity_threshold, call poster_text_grounding to get bboxes (limit to bbox_limit).\n"
@@ -160,6 +154,7 @@ class PosterRefinerAgent:
             "Final output MUST be ONLY a JSON object with keys:\n"
             "final_image_path (string), final_score (float), rounds (int), history (list).\n"
             "history items should include at least: round, score_before, bboxes, edits, score_after.\n"
+            "You MAY also include an optional `thoughts` field (list of strings) to record your reasoning/progress.\n"
         )
 
         log_agent_start("poster_refiner_agent")
@@ -298,12 +293,15 @@ class PosterRefinerAgent:
             "         output_image_path=f\"{work_dir}/r{round}_b{i}.png\", model_name=zimage_model_name, device=device, upscale_factor=2).\n"
             "       * Set current_image_path to the returned output_image_path.\n"
             "3) After loop, call poster_text_score once more for final_score.\n\n"
-            "Return ONLY JSON with:\n"
+            "Return ONLY a single valid JSON object (no markdown fences, no extra text).\n"
+            "You MAY include your thinking/progress ONLY inside JSON fields.\n"
+            "JSON schema:\n"
             "{\n"
             "  \"final_image_path\": \"...\",\n"
             "  \"final_score\": <float>,\n"
             "  \"rounds\": <int>,\n"
-            "  \"history\": [ ... ]\n"
+            "  \"history\": [ ... ],\n"
+            "  \"thoughts\": [\"optional\", \"string\", \"list\"]\n"
             "}\n"
         )
 
@@ -324,11 +322,59 @@ class PosterRefinerAgent:
         for chunk in tool_assistant.run(messages):
             for msg in chunk:
                 if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
-                    final_content = msg["content"]
+                    c = msg["content"]
+                    # Some gateways may return whitespace-only content; ignore those.
+                    if isinstance(c, str) and c.strip():
+                        final_content = c
 
-        assert final_content, "Qwen-Agent did not produce assistant content"
-        result = json.loads(final_content)
-        assert isinstance(result, dict), f"agent final output must be json object, got: {type(result)}"
+        if not final_content or not str(final_content).strip():
+            raise RuntimeError("Qwen-Agent did not produce non-empty assistant content")
+
+        # Persist raw output for debugging before parsing
+        save_json_log(
+            agent_name=_AGENT_NAME,
+            func_name="agent_final_raw",
+            payload={"raw": final_content},
+            log_root=_LOG_ROOT,
+        )
+
+        # Parse robustly; if invalid, rerun once with stricter constraints.
+        try:
+            result = parse_agent_final_json(final_content)
+        except Exception as e:
+            rerun = int(os.getenv("POSTER_REFINER_RERUN_ON_INVALID_FINAL_JSON", "1") or "1")
+            if rerun <= 0:
+                raise
+
+            strict_user_prompt = (
+                user_prompt
+                + "\n\nSTRICT MODE:\n"
+                + "- Output MUST be a single valid JSON object, with no extra text.\n"
+                + "- You may include progress/thoughts ONLY inside JSON fields (e.g., thoughts/history).\n"
+                + "- Do NOT wrap JSON in markdown fences.\n"
+            )
+            strict_messages = [{"role": "user", "content": f"{strict_user_prompt}\n\nContext(JSON): {json.dumps(context, ensure_ascii=False)}"}]
+
+            final_content2: str | None = None
+            for chunk in tool_assistant.run(strict_messages):
+                for msg in chunk:
+                    if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
+                        c = msg["content"]
+                        if isinstance(c, str) and c.strip():
+                            final_content2 = c
+
+            if not final_content2 or not str(final_content2).strip():
+                raise RuntimeError(f"Agent strict rerun still produced empty content; original_error={e!r}")
+
+            save_json_log(
+                agent_name=_AGENT_NAME,
+                func_name="agent_final_raw_strict_rerun",
+                payload={"raw": final_content2},
+                log_root=_LOG_ROOT,
+            )
+
+            result = parse_agent_final_json(final_content2)
+
         assert "final_image_path" in result, "missing final_image_path in agent output"
         assert "final_score" in result, "missing final_score in agent output"
         assert "rounds" in result, "missing rounds in agent output"
