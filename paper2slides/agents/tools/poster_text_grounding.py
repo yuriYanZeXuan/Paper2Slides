@@ -91,16 +91,7 @@ def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
         if x1 <= x0 or y1 <= y0:
             continue
         bboxes.append((x0, y0, x1, y1))
-
-    if not bboxes:
-        # 兜底：如果 VLM 结果为空，仍然返回一个中心 bbox，保证下游流程可用
-        cx, cy = w // 2, h // 2
-        bw, bh = w // 3, h // 6
-        x0 = max(cx - bw // 2, 0)
-        y0 = max(cy - bh // 2, 0)
-        x1 = min(cx + bw // 2, w)
-        y1 = min(cy + bh // 2, h)
-        bboxes = [(x0, y0, x1, y1)]
+    assert len(bboxes) > 0, "No bboxes found"
 
     log_agent_info("poster_text_grounding", f"vlm grounded {len(bboxes)} regions: {bboxes}")
     return bboxes

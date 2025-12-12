@@ -26,11 +26,7 @@ def score_poster_text_clarity_with_vlm(image: Image.Image) -> float:
 
     设计为一个可复用的函数，后续可以替换为本地开源 VLM，只需提供同样接口。
     """
-    try:
-        client = get_openai_client(key_type="text")
-    except Exception as e:
-        log_agent_warning("poster_text_score", f"failed to init VLM client: {e}, fallback to dummy score=5.0")
-        return 5.0
+    client = get_openai_client(key_type="text")
 
     b64 = _encode_image_to_base64(image)
 
@@ -61,23 +57,19 @@ def score_poster_text_clarity_with_vlm(image: Image.Image) -> float:
         },
     ]
 
-    try:
-        response = client.chat.completions.create(
-            model=DEFAULT_TEXT_VLM_MODEL,
-            messages=messages,
-            temperature=0.0,
-            response_format={"type": "json_object"},
-        )
-        content = response.choices[0].message.content
-        data = json.loads(content)
-        score = float(data.get("score", 5.0))
-        # clamp to [0, 10]
-        score = max(0.0, min(10.0, score))
-        log_agent_info("poster_text_score", f"vlm score={score:.2f}")
-        return score
-    except Exception as e:
-        log_agent_warning("poster_text_score", f"VLM scoring failed: {e}, fallback to dummy score=5.0")
-        return 5.0
+    response = client.chat.completions.create(
+        model=DEFAULT_TEXT_VLM_MODEL,
+        messages=messages,
+        temperature=0.0,
+        response_format={"type": "json_object"},
+    )
+    content = response.choices[0].message.content
+    data = json.loads(content)
+    score = float(data.get("score", 5.0))
+    # clamp to [0, 10]
+    score = max(0.0, min(10.0, score))
+    log_agent_info("poster_text_score", f"vlm score={score:.2f}")
+    return score
 
 
 @register_tool('poster_text_score')
