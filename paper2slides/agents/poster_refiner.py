@@ -18,7 +18,7 @@ from paper2slides.utils.agent_artifact_logging import (
     save_json_log,
     get_default_log_root,
 )
-from paper2slides.utils.api_utils import DEFAULT_TEXT_BASE_URL, load_env_api_key
+from paper2slides.utils.api_utils import DEFAULT_CHAT_COMPLETIONS_URL, load_env_api_key
 logger = get_logger(__name__)
 
 
@@ -84,7 +84,7 @@ class PosterRefinerAgent:
             "model_type": "openai",
             "model": _TOOL_AGENT_MODEL,
             "api_key": raw_key,
-            "base_url": DEFAULT_TEXT_BASE_URL,
+            "base_url": DEFAULT_CHAT_COMPLETIONS_URL,
         }
 
         _append_debug_ndjson(

@@ -21,8 +21,8 @@ def _load_env_api_key():
 
 def _get_api_base_url():
     # base_url 写死在 api_utils.DEFAULT_TEXT_BASE_URL；这里不再从环境变量读取
-    from ..utils.api_utils import DEFAULT_TEXT_BASE_URL
-    return DEFAULT_TEXT_BASE_URL
+    from ..utils.api_utils import DEFAULT_CHAT_COMPLETIONS_URL
+    return DEFAULT_CHAT_COMPLETIONS_URL
 
 DEFAULT_STORAGE_DIR = PROJECT_ROOT / "rag" / "storage"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "rag" / "output"

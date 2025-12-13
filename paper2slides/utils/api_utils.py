@@ -14,9 +14,6 @@ from pathlib import Path
 from typing import Optional, Any, Dict, List, Union
 
 
-# image 侧目前主要走 Gemini 原生 endpoint（见 image_generator.py），但 fallback 的 chat/completions 仍可复用同一 base
-DEFAULT_IMAGE_BASE_URL = "https://runway.devops.rednote.life/openai/google/v1:generateContent"
-
 # ========= 写死的 OpenAI 兼容 endpoint（包含 api-version，禁止运行时拼接）=========
 # 按你的要求：直接把 "?api-version=2024-12-01-preview" 写死在 URL 里，不从环境变量读取，也不通过格式化/拼接生成。
 DEFAULT_CHAT_COMPLETIONS_URL = "https://runway.devops.rednote.life/openai/chat/completions?api-version=2024-12-01-preview"

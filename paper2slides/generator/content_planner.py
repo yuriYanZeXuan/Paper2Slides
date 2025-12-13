@@ -121,7 +121,6 @@ class ContentPlanner:
         from ..utils.api_utils import load_env_api_key, get_openai_client
         
         self.api_key = api_key or load_env_api_key()
-        # base_url 写死在 api_utils.DEFAULT_TEXT_BASE_URL；这里只允许显式参数覆盖
         self.base_url = base_url
         self.model = model
         
