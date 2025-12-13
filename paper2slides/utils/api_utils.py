@@ -8,24 +8,18 @@ PosterGen2 environment settings (GEMINI_TEXT_KEY, RUNWAY_API_KEY, etc.)
 import os
 import sys
 import json
-import logging
 import requests
 from urllib.parse import urlparse, urlunparse
 from pathlib import Path
 from typing import Optional, Any, Dict, List, Union
 
 
-# ========= 默认网关（写死，不从环境变量读取 base_url）=========
-# 说明：
-# - 线上/内网网关提供 OpenAI 兼容接口：{BASE}/chat/completions、{BASE}/embeddings
-# - 这里的 BASE 必须包含 /openai/v1，否则会拼出 /openai/chat/completions 导致 404
-DEFAULT_TEXT_BASE_URL = "https://runway.devops.rednote.life/openai/v1"
 # image 侧目前主要走 Gemini 原生 endpoint（见 image_generator.py），但 fallback 的 chat/completions 仍可复用同一 base
-DEFAULT_IMAGE_BASE_URL = DEFAULT_TEXT_BASE_URL
+DEFAULT_IMAGE_BASE_URL = "https://runway.devops.rednote.life/openai/google/v1:generateContent"
 
 # ========= 写死的 OpenAI 兼容 endpoint（包含 api-version，禁止运行时拼接）=========
 # 按你的要求：直接把 "?api-version=2024-12-01-preview" 写死在 URL 里，不从环境变量读取，也不通过格式化/拼接生成。
-DEFAULT_CHAT_COMPLETIONS_URL = "https://runway.devops.rednote.life/openai/v1/chat/completions?api-version=2024-12-01-preview"
+DEFAULT_CHAT_COMPLETIONS_URL = "https://runway.devops.rednote.life/openai/chat/completions?api-version=2024-12-01-preview"
 
 def load_env_api_key(key_type: str = "text") -> str:
     """
@@ -82,7 +76,7 @@ class CustomHTTPClient:
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.chat = self.Chat(self)
-        self.embeddings = self.Embeddings(self)
+        
 
     class Chat:
         def __init__(self, client):
@@ -138,15 +132,9 @@ def get_openai_client(
     Args:
         key_type: "text" (default) or "image" to select appropriate env vars if api_key not provided.
     """
-    final_api_key = api_key or load_env_api_key(key_type)
-    # base_url 不允许从环境变量读取（避免拼错 /openai vs /openai/v1）
-    if base_url:
-        final_base_url = base_url
-    else:
-        final_base_url = DEFAULT_IMAGE_BASE_URL if key_type == "image" else DEFAULT_TEXT_BASE_URL
+    final_api_key = api_key 
     
-    if not final_api_key:
-        raise ValueError(f"No API key found for {key_type}")
+    final_base_url = base_url
 
     use_custom_http = False
     if final_base_url and ("runway" in final_base_url or "nano" in final_base_url or "devops" in final_base_url):
@@ -182,7 +170,7 @@ def main() -> None:
         )
 
     # 明确使用 CustomHTTPClient（走写死 endpoint），避免不同环境下 OpenAI SDK 行为差异
-    client = CustomHTTPClient(api_key=api_key, base_url=DEFAULT_TEXT_BASE_URL)
+    client = CustomHTTPClient(api_key=api_key, base_url=DEFAULT_CHAT_COMPLETIONS_URL)
 
     print("[api_utils] chat_completions_url =", DEFAULT_CHAT_COMPLETIONS_URL)
     resp = client.chat.completions.create(

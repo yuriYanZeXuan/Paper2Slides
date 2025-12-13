@@ -382,16 +382,9 @@ class ImageGenerator:
             return self._call_zimage_local(prompt, reference_images)
         if backend == "qwen":
             return self._call_qwen_local(prompt, reference_images)
-        
         # Check if we should use native Gemini API (based on model name or config)
         if "gemini" in self.model.lower() and "preview" in self.model.lower():
-            try:
-                return self._call_gemini_native(prompt, reference_images)
-            except Exception as e:
-                # 如果使用的是原生 gemini endpoint，避免回退到 chat/completions 以免 404
-                if "google/v1" in (self.base_url or "") or ":generateContent" in (self.base_url or ""):
-                    raise
-                print(f"Gemini native call failed: {e}. Falling back to OpenAI SDK.")
+            return self._call_gemini_native(prompt, reference_images)
         
         content = [{"type": "text", "text": prompt}]
         
