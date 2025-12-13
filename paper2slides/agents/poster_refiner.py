@@ -30,22 +30,6 @@ _TOOL_AGENT_MODEL = os.getenv("POSTER_TOOL_AGENT_MODEL", "gpt-4o")
 _MAX_ROUNDS_DEFAULT = 3
 _BBOX_LIMIT_DEFAULT = 5
 
-def _derive_azure_endpoint_from_base(url: str) -> str:
-    """Derive AzureOpenAI azure_endpoint from a gateway base url.
-
-    For gateways like:
-      https://host/openai
-    the Azure-style endpoint should be:
-      https://host
-    because the client will append `/openai/deployments/...`.
-    """
-    u = (url or "").strip().rstrip("/")
-    if not u:
-        return u
-    for suffix in ("/openai/v1", "/openai", "/v1"):
-        if u.endswith(suffix):
-            return u[: -len(suffix)].rstrip("/")
-    return u
 
 def _append_debug_ndjson(message: str, data: dict, *, hypothesis_id: str) -> None:
     """Debug-mode instrumentation. Writes NDJSON to local debug log path.
@@ -92,8 +76,6 @@ class PosterRefinerAgent:
         # 注意：这里使用 OpenAI 兼容的配置（api_key/base_url/model），以适配项目现有网关。
         raw_base = os.getenv("RAG_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("RUNWAY_API_BASE") or ""
         raw_key = os.getenv("RAG_LLM_API_KEY") or os.getenv("GEMINI_TEXT_KEY") or os.getenv("RUNWAY_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
-        raw_base = (raw_base or "").strip()
-        raw_key = (raw_key or "").strip()
         assert raw_key, "No API key found for tool agent (RAG_LLM_API_KEY/GEMINI_TEXT_KEY/RUNWAY_API_KEY/OPENAI_API_KEY)"
         assert raw_base, "No base url found for tool agent (RAG_LLM_BASE_URL/OPENAI_BASE_URL/RUNWAY_API_BASE)"
 
@@ -104,7 +86,7 @@ class PosterRefinerAgent:
         # and Azure-style deployments endpoint works at domain root.
         runway_api_version = os.getenv("RUNWAY_API_VERSION") or os.getenv("AZURE_API_VERSION") or "2024-12-01-preview"
 
-        azure_endpoint = _derive_azure_endpoint_from_base(raw_base)
+        azure_endpoint = raw_base
         # Prefer Azure client for runway gateway to ensure api-key + api-version behavior.
         self._llm_cfg = {
             "model_type": "azure",
