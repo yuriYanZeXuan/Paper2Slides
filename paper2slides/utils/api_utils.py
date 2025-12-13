@@ -17,6 +17,18 @@ from typing import Optional, Any, Dict, List, Union
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# ========= 默认网关（写死，不从环境变量读取 base_url）=========
+# 说明：
+# - 线上/内网网关提供 OpenAI 兼容接口：{BASE}/chat/completions、{BASE}/embeddings
+# - 这里的 BASE 必须包含 /openai/v1，否则会拼出 /openai/chat/completions 导致 404
+DEFAULT_TEXT_BASE_URL = "https://runway.devops.rednote.life/openai/v1"
+# image 侧目前主要走 Gemini 原生 endpoint（见 image_generator.py），但 fallback 的 chat/completions 仍可复用同一 base
+DEFAULT_IMAGE_BASE_URL = DEFAULT_TEXT_BASE_URL
+
+# ========= 写死的 OpenAI 兼容 endpoint（包含 api-version，禁止运行时拼接）=========
+# 按你的要求：直接把 "?api-version=2024-12-01-preview" 写死在 URL 里，不从环境变量读取，也不通过格式化/拼接生成。
+DEFAULT_CHAT_COMPLETIONS_URL = "https://runway.devops.rednote.life/openai/v1/chat/completions?api-version=2024-12-01-preview"
+
 def load_env_api_key(key_type: str = "text") -> str:
     """
     Load API key from environment variables with fallback support.
@@ -64,24 +76,6 @@ def load_env_api_key(key_type: str = "text") -> str:
             or ""
         ).strip()
 
-def get_api_base_url(key_type: str = "text") -> Optional[str]:
-    """
-    Get API base URL from environment variables.
-    """
-    if key_type == "image":
-        return (
-            os.getenv("IMAGE_GEN_BASE_URL")
-            or os.getenv("RAG_LLM_BASE_URL") # Fallback to text URL if not set
-            or os.getenv("OPENAI_BASE_URL")
-            or os.getenv("RUNWAY_API_BASE")
-        )
-    else:
-        return (
-            os.getenv("RAG_LLM_BASE_URL")
-            or os.getenv("OPENAI_BASE_URL")
-            or os.getenv("RUNWAY_API_BASE")
-        )
-
 class CustomHTTPClient:
     """
     A wrapper that mimics OpenAI client structure but uses raw HTTP requests.
@@ -101,37 +95,12 @@ class CustomHTTPClient:
             def __init__(self, client):
                 self.client = client
 
-            def _looks_like_azure_openai(self, base_url: str) -> bool:
-                """
-                Heuristically detect Azure OpenAI style endpoints that require api-version.
-                Examples:
-                - https://{resource}.openai.azure.com/openai/deployments/{deployment}
-                - https://{resource}.openai.azure.com/openai
-                """
-                try:
-                    parsed = urlparse(base_url)
-                except Exception:
-                    return False
-                host = (parsed.netloc or "").lower()
-                path = (parsed.path or "").lower()
-                if host.endswith(".openai.azure.com"):
-                    return True
-                if "/openai/deployments" in path:
-                    return True
-                return False
-
-            def _with_api_version(self, url: str, api_version: str) -> str:
-                if "api-version=" in url:
-                    return url
-                return f"{url}{'&' if '?' in url else '?'}api-version={api_version}"
-
             def create(self, model: str, messages: List[Dict], **kwargs) -> Any:
-                # Determine endpoint based on model type or URL pattern
-                url = f"{self.client.base_url}/chat/completions"
+                # endpoint 写死（包含 api-version），不要运行时拼接
+                url = DEFAULT_CHAT_COMPLETIONS_URL
                 
                 headers = {
                     "api-key": self.client.api_key,
-                    "Authorization": f"Bearer {self.client.api_key}",
                     "Content-Type": "application/json",
                 }
                 
@@ -144,79 +113,26 @@ class CustomHTTPClient:
                 if "extra_body" in payload:
                      del payload["extra_body"]
 
-                api_version = os.getenv("AZURE_OPENAI_API_VERSION") or "2024-12-01-preview"
-                request_urls: List[str] = [url]
-                # Only attach api-version for Azure OpenAI-like endpoints.
-                if self._looks_like_azure_openai(self.client.base_url):
-                    request_urls = [self._with_api_version(url, api_version)]
-
-                last_exc: Exception | None = None
-                for req_url in request_urls:
-                    try:
-                        response = requests.post(req_url, headers=headers, json=payload, timeout=120)
-                        # If api-version was accidentally added to a non-Azure gateway, retry without it on 404.
-                        if response.status_code == 404 and "api-version=" in req_url and req_url != url:
-                            response = requests.post(url, headers=headers, json=payload, timeout=120)
-                        response.raise_for_status()
-                        data = response.json()
+                try:
+                    response = requests.post(url, headers=headers, json=payload, timeout=120)
+                    response.raise_for_status()
+                    data = response.json()
                     
-                        class Message:
-                            def __init__(self, content): self.content = content
-                        class Choice:
-                            def __init__(self, message_content): self.message = Message(message_content)
-                        class Response:
-                            def __init__(self, choices_data):
-                                self.choices = [Choice(c.get("message", {}).get("content", "")) for c in choices_data]
+                    class Message:
+                        def __init__(self, content): self.content = content
+                    class Choice:
+                        def __init__(self, message_content): self.message = Message(message_content)
+                    class Response:
+                        def __init__(self, choices_data):
+                            self.choices = [Choice(c.get("message", {}).get("content", "")) for c in choices_data]
                     
-                        return Response(data.get("choices", []))
+                    return Response(data.get("choices", []))
 
-                    except Exception as e:
-                        last_exc = e
-                        continue
+                except Exception as e:
+                    logger.error(f"Custom HTTP Chat Completion failed: {e}")
+                    raise
 
-                logger.error(f"Custom HTTP Chat Completion failed: {last_exc}")
-                raise last_exc
-
-    class Embeddings:
-        def __init__(self, client):
-            self.client = client
-
-        def create(self, input: Union[str, List[str]], model: str, **kwargs) -> Any:
-            url = f"{self.client.base_url}/embeddings"
-
-            headers = {
-                "api-key": self.client.api_key,
-                "Authorization": f"Bearer {self.client.api_key}",
-                "Content-Type": "application/json",
-            }
-            
-            payload = {"model": model, "input": input, **kwargs}
-
-            try:
-                # Same api-version handling policy as chat completions: only for Azure OpenAI-like endpoints,
-                # and retry without api-version on 404.
-                api_version = os.getenv("AZURE_OPENAI_API_VERSION") or "2024-12-01-preview"
-                parsed = urlparse(self.client.base_url)
-                is_azure_like = (parsed.netloc or "").lower().endswith(".openai.azure.com") or ("/openai/deployments" in (parsed.path or "").lower())
-                req_url = f"{url}{'&' if '?' in url else '?'}api-version={api_version}" if is_azure_like else url
-
-                response = requests.post(req_url, headers=headers, json=payload, timeout=60)
-                if response.status_code == 404 and "api-version=" in req_url and req_url != url:
-                    response = requests.post(url, headers=headers, json=payload, timeout=60)
-                response.raise_for_status()
-                data = response.json()
-                
-                class EmbeddingData:
-                    def __init__(self, embedding): self.embedding = embedding
-                class Response:
-                    def __init__(self, data_list):
-                        self.data = [EmbeddingData(d["embedding"]) for d in data_list]
-
-                return Response(data.get("data", []))
-
-            except Exception as e:
-                logger.error(f"Custom HTTP Embeddings failed: {e}")
-                raise
+    
 
 def get_openai_client(
     api_key: Optional[str] = None, 
@@ -229,7 +145,11 @@ def get_openai_client(
         key_type: "text" (default) or "image" to select appropriate env vars if api_key not provided.
     """
     final_api_key = api_key or load_env_api_key(key_type)
-    final_base_url = base_url or get_api_base_url(key_type)
+    # base_url 不允许从环境变量读取（避免拼错 /openai vs /openai/v1）
+    if base_url:
+        final_base_url = base_url
+    else:
+        final_base_url = DEFAULT_IMAGE_BASE_URL if key_type == "image" else DEFAULT_TEXT_BASE_URL
     
     if not final_api_key:
         raise ValueError(f"No API key found for {key_type}")
@@ -244,3 +164,44 @@ def get_openai_client(
     
     from openai import OpenAI
     return OpenAI(api_key=final_api_key, base_url=final_base_url)
+
+
+def main() -> None:
+    """
+    直接在本文件内做连通性测试（急用）：
+    - 默认模型：gpt-4o
+    - 默认走写死的网关 endpoint（含 api-version）
+    - API Key 仍从环境变量读取（见 load_env_api_key）
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Quick test for Paper2Slides LLM gateway (chat/completions)")
+    parser.add_argument("--model", default="gpt-4o", help="Model name, e.g. gpt-4o")
+    parser.add_argument("--prompt", default="请用一句话自我介绍。", help="User prompt")
+    parser.add_argument("--max_tokens", type=int, default=256)
+    parser.add_argument("--temperature", type=float, default=0.2)
+    args = parser.parse_args()
+
+    api_key = load_env_api_key("text")
+    if not api_key:
+        raise SystemExit(
+            "缺少 API Key：请设置 RAG_LLM_API_KEY / GEMINI_TEXT_KEY / RUNWAY_API_KEY / OPENAI_API_KEY 之一"
+        )
+
+    # 明确使用 CustomHTTPClient（走写死 endpoint），避免不同环境下 OpenAI SDK 行为差异
+    client = CustomHTTPClient(api_key=api_key, base_url=DEFAULT_TEXT_BASE_URL)
+
+    print("[api_utils] chat_completions_url =", DEFAULT_CHAT_COMPLETIONS_URL)
+    resp = client.chat.completions.create(
+        model=args.model,
+        messages=[{"role": "user", "content": args.prompt}],
+        max_tokens=args.max_tokens,
+        temperature=args.temperature,
+    )
+    text = (resp.choices[0].message.content if getattr(resp, "choices", None) else "") or ""
+    print("[api_utils] ok\n")
+    print(text)
+
+
+if __name__ == "__main__":
+    main()

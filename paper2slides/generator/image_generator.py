@@ -105,7 +105,7 @@ class ImageGenerator:
                      'zimage' 使用本地 Z-Image 模型（diffusers）。
             local_model: 本地 Z-Image 模型的 repo id 或路径，默认 `Tongyi-MAI/Z-Image-Turbo`。
         """
-        from ..utils.api_utils import load_env_api_key, get_api_base_url, get_openai_client
+        from ..utils.api_utils import load_env_api_key, get_openai_client
         
         # 后端选择
         self.backend = backend
@@ -122,9 +122,9 @@ class ImageGenerator:
         # Load keys specifically for "image" usage
         self.api_key = api_key or load_env_api_key("image")
         
-        # 若 .env 未提供 IMAGE_GEN_BASE_URL，则使用与 PosterGen2 相同的默认原生 URL
-        env_base_url = get_api_base_url("image")
-        self.base_url = base_url or env_base_url or self.DEFAULT_GEMINI_NATIVE_URL
+        # base_url 不从环境变量读取；默认走 Gemini 原生 endpoint（写死）
+        # 若你想强制走 chat/completions fallback，可显式传 base_url（例如 https://.../openai/v1）
+        self.base_url = base_url or self.DEFAULT_GEMINI_NATIVE_URL
         
         # Use key_type="image" to ensure correct logging/client selection
         self.client = get_openai_client(api_key=self.api_key, base_url=self.base_url, key_type="image")

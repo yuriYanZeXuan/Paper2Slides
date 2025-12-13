@@ -118,10 +118,11 @@ class ContentPlanner:
         model: str = "gpt-4o",
     ):
         import os
-        from ..utils.api_utils import load_env_api_key, get_api_base_url, get_openai_client
+        from ..utils.api_utils import load_env_api_key, get_openai_client
         
         self.api_key = api_key or load_env_api_key()
-        self.base_url = base_url or get_api_base_url()
+        # base_url 写死在 api_utils.DEFAULT_TEXT_BASE_URL；这里只允许显式参数覆盖
+        self.base_url = base_url
         self.model = model
         
         self.client = get_openai_client(api_key=self.api_key, base_url=self.base_url)

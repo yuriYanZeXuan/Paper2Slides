@@ -18,6 +18,7 @@ from paper2slides.utils.agent_artifact_logging import (
     save_json_log,
     get_default_log_root,
 )
+from paper2slides.utils.api_utils import DEFAULT_TEXT_BASE_URL, load_env_api_key
 logger = get_logger(__name__)
 
 
@@ -74,35 +75,23 @@ class PosterRefinerAgent:
         self.plan_text_spans_path: str | None = plan_text_spans_path
         # Qwen-Agent 工具调度 Agent：用于自主决定是否需要继续 grounding/refine
         # 注意：这里使用 OpenAI 兼容的配置（api_key/base_url/model），以适配项目现有网关。
-        raw_base = os.getenv("RAG_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("RUNWAY_API_BASE") or ""
-        raw_key = os.getenv("RAG_LLM_API_KEY") or os.getenv("GEMINI_TEXT_KEY") or os.getenv("RUNWAY_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+        raw_key = load_env_api_key("text")
         assert raw_key, "No API key found for tool agent (RAG_LLM_API_KEY/GEMINI_TEXT_KEY/RUNWAY_API_KEY/OPENAI_API_KEY)"
-        assert raw_base, "No base url found for tool agent (RAG_LLM_BASE_URL/OPENAI_BASE_URL/RUNWAY_API_BASE)"
 
-        # Runtime evidence (probe) shows this gateway requires:
-        # - api-key header
-        # - api-version query
-        # - path like /openai/chat/completions (no /v1)
-        # and Azure-style deployments endpoint works at domain root.
-        runway_api_version = os.getenv("RUNWAY_API_VERSION") or os.getenv("AZURE_API_VERSION") or "2024-12-01-preview"
-
-        azure_endpoint = raw_base
-        # Prefer Azure client for runway gateway to ensure api-key + api-version behavior.
+        # base_url 写死（不从环境变量读取），避免 /openai vs /openai/v1 导致 404
+        # qwen_agent 对 OpenAI 兼容配置一般使用 model_type=openai + base_url
         self._llm_cfg = {
-            "model_type": "azure",
-            "model": _TOOL_AGENT_MODEL,  # AzureOpenAI uses deployment name in `model`
+            "model_type": "openai",
+            "model": _TOOL_AGENT_MODEL,
             "api_key": raw_key,
-            "azure_endpoint": azure_endpoint,
-            "api_version": runway_api_version,
+            "base_url": DEFAULT_TEXT_BASE_URL,
         }
 
         _append_debug_ndjson(
             "llm_cfg_selected",
             {
-                "raw_base": raw_base,
                 "model_type": self._llm_cfg.get("model_type"),
-                "azure_endpoint": azure_endpoint,
-                "api_version": runway_api_version,
+                "base_url": self._llm_cfg.get("base_url"),
                 "model": self._llm_cfg.get("model"),
             },
             hypothesis_id="B",

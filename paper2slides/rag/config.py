@@ -20,8 +20,9 @@ def _load_env_api_key():
     return load_env_api_key()
 
 def _get_api_base_url():
-    from ..utils.api_utils import get_api_base_url
-    return get_api_base_url()
+    # base_url 写死在 api_utils.DEFAULT_TEXT_BASE_URL；这里不再从环境变量读取
+    from ..utils.api_utils import DEFAULT_TEXT_BASE_URL
+    return DEFAULT_TEXT_BASE_URL
 
 DEFAULT_STORAGE_DIR = PROJECT_ROOT / "rag" / "storage"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "rag" / "output"
@@ -43,7 +44,7 @@ class APIConfig:
     llm_base_url: Optional[str] = field(
         default_factory=_get_api_base_url
     )
-    """Optional. If None, uses OpenAI official API. Set via OPENAI_BASE_URL etc."""
+    """Optional. If None, uses the project hardcoded gateway base_url (see `paper2slides.utils.api_utils`)."""
     
     llm_model: str = field(
         default_factory=lambda: os.getenv("LLM_MODEL", "gpt-4o-mini")
