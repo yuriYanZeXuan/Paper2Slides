@@ -14,8 +14,6 @@ from urllib.parse import urlparse, urlunparse
 from pathlib import Path
 from typing import Optional, Any, Dict, List, Union
 
-# Configure logging
-logger = logging.getLogger(__name__)
 
 # ========= 默认网关（写死，不从环境变量读取 base_url）=========
 # 说明：
@@ -113,24 +111,20 @@ class CustomHTTPClient:
                 if "extra_body" in payload:
                      del payload["extra_body"]
 
-                try:
-                    response = requests.post(url, headers=headers, json=payload, timeout=120)
-                    response.raise_for_status()
-                    data = response.json()
-                    
-                    class Message:
-                        def __init__(self, content): self.content = content
-                    class Choice:
-                        def __init__(self, message_content): self.message = Message(message_content)
-                    class Response:
-                        def __init__(self, choices_data):
-                            self.choices = [Choice(c.get("message", {}).get("content", "")) for c in choices_data]
-                    
-                    return Response(data.get("choices", []))
+                response = requests.post(url, headers=headers, json=payload, timeout=120)
+                response.raise_for_status()
+                data = response.json()
+                
+                class Message:
+                    def __init__(self, content): self.content = content
+                class Choice:
+                    def __init__(self, message_content): self.message = Message(message_content)
+                class Response:
+                    def __init__(self, choices_data):
+                        self.choices = [Choice(c.get("message", {}).get("content", "")) for c in choices_data]
+                
+                return Response(data.get("choices", []))
 
-                except Exception as e:
-                    logger.error(f"Custom HTTP Chat Completion failed: {e}")
-                    raise
 
     
 
@@ -159,7 +153,6 @@ def get_openai_client(
         use_custom_http = True
             
     if use_custom_http:
-        logger.info(f"Using CustomHTTPClient for {key_type} (URL: {final_base_url})")
         return CustomHTTPClient(api_key=final_api_key, base_url=final_base_url)
     
     from openai import OpenAI
