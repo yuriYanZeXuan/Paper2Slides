@@ -8,6 +8,7 @@ from PIL import Image
 
 from qwen_agent.tools.base import BaseTool, register_tool
 from paper2slides.utils.agent_logging import log_agent_info, log_agent_warning
+from paper2slides.utils.agent_artifact_logging import save_bbox_visualization
 from paper2slides.utils.api_utils import get_openai_client
 
 
@@ -122,4 +123,14 @@ class PosterTextGrounding(BaseTool):
         image_path = params['image_path']
         img = Image.open(image_path).convert("RGB")
         bboxes = ground_poster_text_regions_with_vlm(img)
+
+        # 保存 bbox 可视化结果
+        vis_path = save_bbox_visualization(
+            agent_name="poster_text_grounding",
+            func_name="vlm_grounding",
+            image=img,
+            bboxes=bboxes,
+        )
+        log_agent_info("poster_text_grounding", f"bbox visualization saved to {vis_path}")
+      
         return json.dumps({'bboxes': bboxes}, ensure_ascii=False)
