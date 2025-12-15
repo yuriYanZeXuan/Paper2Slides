@@ -129,16 +129,15 @@ def get_openai_client(
     Args:
         key_type: "text" (default) or "image" to select appropriate env vars if api_key not provided.
     """
-    final_api_key = api_key 
-    
-    final_base_url = base_url
+    final_api_key = os.getenv("RUNWAY_API_KEY")
+    final_base_url = DEFAULT_CHAT_COMPLETIONS_URL
 
     use_custom_http = False
     if final_base_url and ("runway" in final_base_url or "nano" in final_base_url or "devops" in final_base_url):
         use_custom_http = True
             
     if use_custom_http:
-        return CustomHTTPClient(api_key=final_api_key, base_url=final_base_url)
+        return CustomHTTPClient(api_key=final_api_key, base_url=DEFAULT_CHAT_COMPLETIONS_URL)
     
     from openai import OpenAI
     return OpenAI(api_key=final_api_key, base_url=final_base_url)

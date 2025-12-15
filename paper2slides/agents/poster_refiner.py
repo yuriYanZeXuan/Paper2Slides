@@ -27,7 +27,7 @@ BBox = Tuple[int, int, int, int]
 
 _AGENT_NAME = "poster_refiner"
 _LOG_ROOT = get_default_log_root(_AGENT_NAME)
-_TOOL_AGENT_MODEL = os.getenv("POSTER_TOOL_AGENT_MODEL", "gpt-4o")
+_TOOL_AGENT_MODEL = "gpt-4o"
 _MAX_ROUNDS_DEFAULT = 3
 _BBOX_LIMIT_DEFAULT = 5
 
@@ -81,7 +81,7 @@ class PosterRefinerAgent:
         # base_url 写死（不从环境变量读取），避免 /openai vs /openai/v1 导致 404
         # qwen_agent 对 OpenAI 兼容配置一般使用 model_type=openai + base_url
         self._llm_cfg = {
-            "model_type": "openai",
+            "model_type": "azure",
             "model": _TOOL_AGENT_MODEL,
             "api_key": raw_key,
             "base_url": DEFAULT_CHAT_COMPLETIONS_URL,
