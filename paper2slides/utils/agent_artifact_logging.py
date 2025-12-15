@@ -29,8 +29,8 @@ _current_session_dir: Optional[Path] = None
 
 
 def _get_agent_logs_root() -> Path:
-    """返回 agent_logs 根目录。"""
-    return Path(os.getcwd()) / "agent_logs"
+    """返回 agent_logs 根目录，统一放在 outputs 目录下。"""
+    return Path(os.getcwd()) / "outputs" / "agent_logs"
 
 
 def _find_next_run_number(root: Path) -> int:
