@@ -98,9 +98,11 @@ class CustomHTTPClient:
                     "messages": messages,
                     **kwargs
                 }
-                # Remove extra_body if present
-                if "extra_body" in payload:
-                     del payload["extra_body"]
+                # Remove unsupported parameters for runway/nano gateway
+                unsupported_keys = ["extra_body", "response_format"]
+                for key in unsupported_keys:
+                    if key in payload:
+                        del payload[key]
 
                 response = requests.post(url, headers=headers, json=payload, timeout=120)
                 response.raise_for_status()

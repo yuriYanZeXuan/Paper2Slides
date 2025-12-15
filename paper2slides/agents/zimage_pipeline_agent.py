@@ -35,6 +35,7 @@ from paper2slides.utils.agent_logging import (
     log_agent_success,
     log_agent_warning,
 )
+from paper2slides.utils.agent_artifact_logging import init_session, get_session_output_dir
 from paper2slides.agents.poster_refiner import PosterRefinerAgent
 
 
@@ -114,7 +115,11 @@ def _collect_images(output_dir: Path, output_type: str) -> List[Path]:
 
 def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
     agent = "zimage_pipeline_agent"
+    
+    # 初始化日志 session，所有 agent 日志和输出将保存在同一个序号目录下
+    session_dir = init_session()
     log_agent_start(agent)
+    log_agent_info(agent, f"logging session: {session_dir}")
 
     # 1. 解析/归一化输入
     input_path = normalize_input_path(args.input)
@@ -177,9 +182,9 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
         plan_text_spans_path = str(plan_text_spans_file)
         log_agent_info(agent, f"saved plan_text_spans to {plan_text_spans_file}")
 
-    # 3. 找到本次生成的输出图片目录
-    output_dir = _find_latest_output_dir(config_dir)
-    log_agent_info(agent, f"raw outputs dir={output_dir}")
+    # 3. 获取本次 session 的输出图片目录（generate_stage 已将图片保存到此目录）
+    output_dir = get_session_output_dir()
+    log_agent_info(agent, f"session outputs dir={output_dir}")
 
     # 4. 收集需要强化的图片
     image_paths = _collect_images(output_dir, args.output)

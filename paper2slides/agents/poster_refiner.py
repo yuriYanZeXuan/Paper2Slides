@@ -26,7 +26,6 @@ BBox = Tuple[int, int, int, int]
 
 
 _AGENT_NAME = "poster_refiner"
-_LOG_ROOT = get_default_log_root(_AGENT_NAME)
 _TOOL_AGENT_MODEL = "gpt-4o"
 _MAX_ROUNDS_DEFAULT = 3
 _BBOX_LIMIT_DEFAULT = 5
@@ -126,7 +125,8 @@ class PosterRefinerAgent:
     def _save_tmp_image_for_tool(self, image: Image.Image, tag: str) -> str:
         """Save image into agent log root for tool consumption (tools take image_path)."""
         assert isinstance(tag, str) and tag.strip()
-        tmp_dir = os.path.join(_LOG_ROOT, "tool_inputs")
+        log_root = get_default_log_root(_AGENT_NAME)
+        tmp_dir = os.path.join(log_root, "tool_inputs")
         os.makedirs(tmp_dir, exist_ok=True)
         path = os.path.join(tmp_dir, f"{tag}.png")
         image.save(path)
@@ -166,7 +166,9 @@ class PosterRefinerAgent:
             system_message=self._system_message,
         )
 
-        work_dir = os.path.join(_LOG_ROOT, "autonomous")
+        # 动态获取当前 session 的日志目录
+        log_root = get_default_log_root(_AGENT_NAME)
+        work_dir = os.path.join(log_root, "autonomous")
         os.makedirs(work_dir, exist_ok=True)
 
         init_image_path = os.path.join(work_dir, "round0_init.png")
@@ -195,7 +197,7 @@ class PosterRefinerAgent:
                     "model_server": self._llm_cfg.get("model_server"),
                 },
             },
-            log_root=_LOG_ROOT,
+            log_root=log_root,
         )
 
         user_prompt = (
@@ -263,7 +265,7 @@ class PosterRefinerAgent:
             agent_name=_AGENT_NAME,
             func_name="agent_final_raw",
             payload={"raw": final_content},
-            log_root=_LOG_ROOT,
+            log_root=log_root,
         )
 
         # Parse robustly; if invalid, rerun once with stricter constraints.
@@ -306,7 +308,7 @@ class PosterRefinerAgent:
                 agent_name=_AGENT_NAME,
                 func_name="agent_final_raw_strict_rerun",
                 payload={"raw": final_content2},
-                log_root=_LOG_ROOT,
+                log_root=log_root,
             )
 
             result = parse_agent_final_json(final_content2)
@@ -321,7 +323,7 @@ class PosterRefinerAgent:
             agent_name=_AGENT_NAME,
             func_name="agent_final",
             payload=result,
-            log_root=_LOG_ROOT,
+            log_root=log_root,
         )
         final_image_path = str(result["final_image_path"])
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict
 
 from ...utils import load_json
+from ...utils.agent_artifact_logging import has_active_session, get_session_output_dir
 from ..paths import get_summary_checkpoint, get_plan_checkpoint, get_output_dir
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,12 @@ async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> 
     logger.info(f"  Generated {len(images)} images")
     
     # Save images
-    output_subdir = get_output_dir(config_dir)
+    # 如果有活跃的 agent session，将输出保存到 session 目录下；否则使用原来的路径
+    if has_active_session():
+        output_subdir = get_session_output_dir()
+        logger.info(f"  Using session output dir: {output_subdir}")
+    else:
+        output_subdir = get_output_dir(config_dir)
     output_subdir.mkdir(parents=True, exist_ok=True)
     
     ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}

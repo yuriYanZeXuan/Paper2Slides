@@ -1,5 +1,15 @@
+"""Agent artifact logging utilities.
+
+重构后的日志管理：
+- 每次运行（session）创建一个独立的序号目录：agent_logs/run_001/, run_002/, ...
+- 所有 agent 的日志和输出统一保存在当前 session 目录下
+- 目录结构：agent_logs/run_XXX/<agent_name>/<func_name>/...
+"""
+
 import json
 import os
+import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -12,6 +22,127 @@ from paper2slides.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+# ============ 全局 Session 管理 ============
+
+_session_lock = threading.Lock()
+_current_session_dir: Optional[Path] = None
+
+
+def _get_agent_logs_root() -> Path:
+    """返回 agent_logs 根目录。"""
+    return Path(os.getcwd()) / "agent_logs"
+
+
+def _find_next_run_number(root: Path) -> int:
+    """找到下一个可用的 run 序号。"""
+    if not root.exists():
+        return 1
+    
+    max_num = 0
+    pattern = re.compile(r"^run_(\d+)$")
+    
+    for item in root.iterdir():
+        if item.is_dir():
+            match = pattern.match(item.name)
+            if match:
+                num = int(match.group(1))
+                max_num = max(max_num, num)
+    
+    return max_num + 1
+
+
+def init_session(session_name: Optional[str] = None) -> Path:
+    """初始化一个新的日志 session，返回 session 目录路径。
+    
+    Args:
+        session_name: 可选的 session 名称。如果不提供，则自动使用 run_XXX 格式。
+    
+    Returns:
+        session 目录的 Path
+    """
+    global _current_session_dir
+    
+    with _session_lock:
+        root = _get_agent_logs_root()
+        root.mkdir(parents=True, exist_ok=True)
+        
+        if session_name:
+            session_dir = root / session_name
+        else:
+            next_num = _find_next_run_number(root)
+            session_dir = root / f"run_{next_num:03d}"
+        
+        session_dir.mkdir(parents=True, exist_ok=True)
+        _current_session_dir = session_dir
+        
+        # 保存 session 元信息
+        meta_path = session_dir / "session_meta.json"
+        meta = {
+            "session_name": session_dir.name,
+            "created_at": datetime.now().isoformat(),
+            "cwd": os.getcwd(),
+        }
+        with meta_path.open("w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"Initialized logging session: {session_dir}")
+        print(f"[agent_logging] Session initialized: {session_dir}")
+        
+        return session_dir
+
+
+def get_current_session_dir() -> Path:
+    """获取当前 session 目录。如果尚未初始化，则自动初始化。"""
+    global _current_session_dir
+    
+    with _session_lock:
+        if _current_session_dir is None:
+            # 自动初始化一个新 session
+            return init_session()
+        return _current_session_dir
+
+
+def has_active_session() -> bool:
+    """检查是否有活跃的 session（已初始化但未显式关闭）。"""
+    with _session_lock:
+        return _current_session_dir is not None
+
+
+def get_session_output_dir() -> Path:
+    """获取当前 session 的 outputs 目录：<session_dir>/outputs.
+    
+    用于保存生成的图片等输出文件，与 agent 日志统一在同一 session 下。
+    """
+    session_dir = get_current_session_dir()
+    output_dir = session_dir / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def set_session_dir(session_dir: Path) -> None:
+    """手动设置当前 session 目录（用于恢复之前的 session）。"""
+    global _current_session_dir
+    
+    with _session_lock:
+        if not session_dir.exists():
+            session_dir.mkdir(parents=True, exist_ok=True)
+        _current_session_dir = session_dir
+        logger.info(f"Session dir set to: {session_dir}")
+
+
+# ============ 兼容旧 API ============
+
+def get_default_log_root(agent_name: str) -> Path:
+    """返回给定 agent 的日志目录：<session_dir>/<agent_name>.
+    
+    兼容旧代码，但现在会自动放在当前 session 下。
+    """
+    session_dir = get_current_session_dir()
+    return session_dir / agent_name
+
+
+# ============ 内部工具函数 ============
+
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
@@ -20,11 +151,7 @@ def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
 
-def get_default_log_root(agent_name: str) -> Path:
-    """返回给定 agent 的默认日志根目录：cwd/agent_logs/<agent_name>."""
-
-    return Path(os.getcwd()) / "agent_logs" / agent_name
-
+# ============ 日志保存函数 ============
 
 def save_json_log(
     agent_name: str,
@@ -32,13 +159,15 @@ def save_json_log(
     payload: Dict[str, Any],
     suffix: Optional[str] = None,
     log_root: Optional[Path] = None,
-) -> None:
+) -> Path:
     """将数值 / LLM 输入输出等信息保存为 json 日志.
 
     日志路径结构：
-        <log_root_or_default>/<agent_name>/<func_name>/<func_name>[_suffix]_timestamp.json
+        <session_dir>/<agent_name>/<func_name>/<func_name>[_suffix]_timestamp.json
+    
+    Returns:
+        保存的文件路径
     """
-
     root = log_root or get_default_log_root(agent_name)
     subdir = root / func_name
     _ensure_dir(subdir)
@@ -49,7 +178,11 @@ def save_json_log(
 
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-        print(f"Saved JSON log to {path}")
+    
+    logger.info(f"Saved JSON log to {path}")
+    print(f"Saved JSON log to {path}")
+    return path
+
 
 def save_before_after_image(
     agent_name: str,
@@ -58,13 +191,15 @@ def save_before_after_image(
     after_img: Image.Image,
     suffix: Optional[str] = None,
     log_root: Optional[Path] = None,
-) -> None:
+) -> Path:
     """将处理前后的图片横向拼接后保存为 PNG.
 
     日志路径结构：
-        <log_root_or_default>/<agent_name>/<func_name>/<func_name>[_suffix]_timestamp.png
+        <session_dir>/<agent_name>/<func_name>/<func_name>[_suffix]_timestamp.png
+    
+    Returns:
+        保存的文件路径
     """
-
     root = log_root or get_default_log_root(agent_name)
     subdir = root / func_name
     _ensure_dir(subdir)
@@ -95,7 +230,9 @@ def save_before_after_image(
     canvas.paste(a, (bw, 0))
 
     canvas.save(path)
+    logger.info(f"Saved image log to {path}")
     print(f"Saved image log to {path}")
+    return path
 
 
 # 定义一组高对比度颜色用于绘制多个bbox
@@ -130,7 +267,7 @@ def save_bbox_visualization(
         image: 原始图片
         bboxes: bbox 列表，每个 bbox 为 (x0, y0, x1, y1)
         suffix: 可选的文件名后缀
-        log_root: 日志根目录，默认为 agent_logs/<agent_name>
+        log_root: 日志根目录
         line_width: 边框线宽
 
     Returns:
@@ -184,4 +321,37 @@ def save_bbox_visualization(
     vis_img.save(path)
     logger.info(f"Saved bbox visualization to {path}")
     print(f"Saved bbox visualization to {path}")
+    return path
+
+
+def save_image(
+    agent_name: str,
+    func_name: str,
+    image: Image.Image,
+    suffix: Optional[str] = None,
+    log_root: Optional[Path] = None,
+) -> Path:
+    """保存单张图片到日志目录。
+
+    Args:
+        agent_name: agent 名称
+        func_name: 函数名称
+        image: 要保存的图片
+        suffix: 可选的文件名后缀
+        log_root: 日志根目录
+
+    Returns:
+        保存的文件路径
+    """
+    root = log_root or get_default_log_root(agent_name)
+    subdir = root / func_name
+    _ensure_dir(subdir)
+
+    ts = _timestamp()
+    suffix_str = f"_{suffix}" if suffix else ""
+    path = subdir / f"{func_name}{suffix_str}_{ts}.png"
+
+    image.save(path)
+    logger.info(f"Saved image to {path}")
+    print(f"Saved image to {path}")
     return path
