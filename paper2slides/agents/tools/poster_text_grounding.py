@@ -39,7 +39,7 @@ def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
         "You must return bounding boxes for regions where text is likely small, low-contrast, or hard to read."
     )
     user_instructions = (
-        "Given this poster image (width: {w}px, height: {h}px), "
+        f"Given this poster image (width: {w}px, height: {h}px), "
         "identify up to 5 regions where text is small or unclear and could benefit from enhancement.\n\n"
         "Return ONLY a JSON object of the form:\n"
         "{\n"
@@ -50,7 +50,7 @@ def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
         "}\n\n"
         "Coordinates must be integer pixel values in the range:\n"
         f"0 <= x0 < x1 <= {w}, 0 <= y0 < y1 <= {h}.\n"
-    ).format(w=w, h=h)
+    )
 
     messages = [
         {"role": "system", "content": system_prompt},
