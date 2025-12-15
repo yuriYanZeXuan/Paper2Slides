@@ -60,22 +60,38 @@ def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
 
     system_prompt = (
         "You are an expert at analyzing poster layouts and detecting small or unclear text regions.\n"
-        "You must return bounding boxes for regions where text is likely small, low-contrast, or hard to read."
+        "You must return bounding boxes for regions where text is likely small, low-contrast, or hard to read.\n"
+        "You should provide your reasoning process and the text content within each region."
     )
     user_instructions = (
-        f"Given this poster image (width: {w}px, height: {h}px), "
-        "identify up to 5 regions where text is small or unclear and could benefit from enhancement.\n\n"
-        "Return ONLY a JSON object of the form:\n"
+        f"Analyze this poster image with dimensions: WIDTH = {w} pixels, HEIGHT = {h} pixels.\n\n"
+        "Task: Identify up to 5 rectangular regions containing small or unclear text that could benefit from enhancement.\n\n"
+        "COORDINATE SYSTEM:\n"
+        f"- Image origin (0, 0) is at TOP-LEFT corner.\n"
+        f"- X-axis: 0 (left) to {w} (right). Y-axis: 0 (top) to {h} (bottom).\n"
+        f"- All coordinates MUST be INTEGER PIXEL VALUES (NOT normalized 0-1 or per-thousand 0-1000).\n"
+        f"- Valid ranges: 0 <= x0 < x1 <= {w}, 0 <= y0 < y1 <= {h}.\n\n"
+        "EXAMPLES for this image:\n"
+        f"- Top-left quarter: [0, 0, {w//2}, {h//2}]\n"
+        f"- Bottom-right quarter: [{w//2}, {h//2}, {w}, {h}]\n"
+        f"- A text region at upper-right: [{int(w*0.7)}, {int(h*0.1)}, {int(w*0.95)}, {int(h*0.25)}]\n\n"
+        "Return ONLY a JSON object with the following structure:\n"
         "{\n"
-        '  "bboxes": [\n'
-        "    [x0, y0, x1, y1],\n"
-        "    ... up to 5 items ...\n"
+        '  "thinking": "Your step-by-step reasoning: how you analyzed the poster, what regions you noticed, why they need enhancement...",\n'
+        f'  "image_size": [{w}, {h}],\n'
+        '  "regions": [\n'
+        "    {\n"
+        '      "bbox": [x0, y0, x1, y1],\n'
+        '      "text_content": "The actual text you can read in this region (transcribe as accurately as possible)",\n'
+        '      "reason": "Why this region needs enhancement (e.g., small font, low contrast, blurry)"\n'
+        "    },\n"
+        "    ... up to 5 regions ...\n"
         "  ]\n"
         "}\n\n"
-        "IMPORTANT: Coordinates MUST be integer pixel values (NOT normalized 0-1 values).\n"
-        f"Valid ranges: 0 <= x0 < x1 <= {w}, 0 <= y0 < y1 <= {h}.\n"
-        f"For example, if you want to mark a region at the bottom-right quarter of the image, "
-        f"you might use [{w//2}, {h//2}, {w}, {h}].\n"
+        "IMPORTANT:\n"
+        "- Coordinates MUST be integer pixel values matching the image dimensions above.\n"
+        "- Each bbox should be at least 50x50 pixels.\n"
+        "- Transcribe the text_content as accurately as you can see it."
     )
 
     messages = [
@@ -102,46 +118,99 @@ def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
     )
     content = client_response.choices[0].message.content
     data = json.loads(content)
-    raw_bboxes = data.get("bboxes", [])
+    
+    # 解析新格式的响应
+    thinking = data.get("thinking", "")
+    vlm_reported_size = data.get("image_size", None)
+    raw_regions = data.get("regions", [])
+    
+    # 兼容旧格式（如果 VLM 返回的是 bboxes 而不是 regions）
+    if not raw_regions and "bboxes" in data:
+        raw_bboxes = data.get("bboxes", [])
+        raw_regions = [{"bbox": box, "text_content": "", "reason": ""} for box in raw_bboxes]
 
     # 记录 VLM 的原始响应到日志文件，便于调试
     save_json_log(
         agent_name="poster_text_grounding",
         func_name="vlm_grounding_raw",
         payload={
-            "image_size": {"width": w, "height": h},
+            "actual_image_size": {"width": w, "height": h},
+            "vlm_reported_size": vlm_reported_size,
             "model": DEFAULT_GROUNDING_VLM_MODEL,
+            "thinking": thinking,
             "raw_response": content,
-            "parsed_bboxes": raw_bboxes,
+            "raw_regions": raw_regions,
         },
     )
     log_agent_info(
         "poster_text_grounding",
-        f"vlm raw response: image_size=({w}, {h}), raw_bboxes={raw_bboxes}"
+        f"vlm thinking: {thinking[:200]}..." if len(thinking) > 200 else f"vlm thinking: {thinking}"
+    )
+    log_agent_info(
+        "poster_text_grounding",
+        f"vlm raw response: actual_size=({w}, {h}), vlm_size={vlm_reported_size}, regions_count={len(raw_regions)}"
     )
 
     bboxes: List[BBox] = []
-    for box in raw_bboxes:
+    region_details: List[dict] = []  # 保存完整的 region 信息用于日志
+    
+    for idx, region in enumerate(raw_regions):
+        if not isinstance(region, dict):
+            log_agent_warning("poster_text_grounding", f"invalid region format: {region}")
+            continue
+        
+        box = region.get("bbox", [])
+        text_content = region.get("text_content", "")
+        reason = region.get("reason", "")
+        
         if not isinstance(box, (list, tuple)) or len(box) != 4:
-            log_agent_warning("poster_text_grounding", f"invalid bbox format: {box}")
+            log_agent_warning("poster_text_grounding", f"invalid bbox format in region {idx}: {box}")
             continue
         
         # 处理可能的归一化坐标
-        x0, y0, x1, y1 = _maybe_denormalize_bbox(list(map(float, box)), w, h)
+        raw_box = list(map(float, box))
+        x0, y0, x1, y1 = _maybe_denormalize_bbox(raw_box, w, h)
         
         # 简单合法性检查与裁剪
         x0 = max(0, min(x0, w))
         x1 = max(0, min(x1, w))
         y0 = max(0, min(y0, h))
         y1 = max(0, min(y1, h))
+        
         if x1 <= x0 or y1 <= y0:
             log_agent_warning("poster_text_grounding", f"invalid bbox after denorm: ({x0}, {y0}, {x1}, {y1})")
             continue
+        
         bboxes.append((x0, y0, x1, y1))
+        region_details.append({
+            "idx": idx,
+            "raw_bbox": raw_box,
+            "final_bbox": [x0, y0, x1, y1],
+            "text_content": text_content,
+            "reason": reason,
+        })
+        
+        log_agent_info(
+            "poster_text_grounding",
+            f"region {idx}: bbox={[x0, y0, x1, y1]}, text='{text_content[:50]}...'" if len(text_content) > 50 
+            else f"region {idx}: bbox={[x0, y0, x1, y1]}, text='{text_content}'"
+        )
+    
+    # 保存详细的 region 信息到日志
+    save_json_log(
+        agent_name="poster_text_grounding",
+        func_name="vlm_grounding_regions",
+        payload={
+            "image_size": {"width": w, "height": h},
+            "thinking": thinking,
+            "valid_regions_count": len(bboxes),
+            "region_details": region_details,
+        },
+    )
     
     if len(bboxes) == 0:
         log_agent_warning("poster_text_grounding", "No valid bboxes found from VLM response")
-        raise ValueError(f"No valid bboxes found. raw_bboxes={raw_bboxes}, image_size=({w}, {h})")
+        raise ValueError(f"No valid bboxes found. raw_regions={raw_regions}, image_size=({w}, {h})")
 
     log_agent_info("poster_text_grounding", f"vlm grounded {len(bboxes)} regions (after denorm): {bboxes}")
     return bboxes
