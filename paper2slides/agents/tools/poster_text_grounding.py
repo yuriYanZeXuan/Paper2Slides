@@ -8,7 +8,7 @@ from PIL import Image
 
 from qwen_agent.tools.base import BaseTool, register_tool
 from paper2slides.utils.agent_logging import log_agent_info, log_agent_warning
-from paper2slides.utils.agent_artifact_logging import save_bbox_visualization
+from paper2slides.utils.agent_artifact_logging import save_bbox_visualization, save_json_log
 from paper2slides.utils.api_utils import get_openai_client
 
 
@@ -21,6 +21,29 @@ def _encode_image_to_base64(image: Image.Image) -> str:
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _maybe_denormalize_bbox(
+    box: List[float], w: int, h: int
+) -> Tuple[int, int, int, int]:
+    """将可能的归一化坐标 (0-1) 转换为像素坐标。
+
+    判断逻辑：如果所有坐标值都在 [0, 1] 范围内，则认为是归一化坐标。
+    """
+    x0, y0, x1, y1 = box
+    # 判断是否是归一化坐标：所有值都在 [0, 1] 范围内
+    is_normalized = all(0 <= v <= 1 for v in [x0, y0, x1, y1])
+    
+    if is_normalized:
+        # 归一化坐标 -> 像素坐标
+        x0 = int(x0 * w)
+        y0 = int(y0 * h)
+        x1 = int(x1 * w)
+        y1 = int(y1 * h)
+    else:
+        x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+    
+    return x0, y0, x1, y1
 
 
 def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
@@ -49,8 +72,10 @@ def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
         "    ... up to 5 items ...\n"
         "  ]\n"
         "}\n\n"
-        "Coordinates must be integer pixel values in the range:\n"
-        f"0 <= x0 < x1 <= {w}, 0 <= y0 < y1 <= {h}.\n"
+        "IMPORTANT: Coordinates MUST be integer pixel values (NOT normalized 0-1 values).\n"
+        f"Valid ranges: 0 <= x0 < x1 <= {w}, 0 <= y0 < y1 <= {h}.\n"
+        f"For example, if you want to mark a region at the bottom-right quarter of the image, "
+        f"you might use [{w//2}, {h//2}, {w}, {h}].\n"
     )
 
     messages = [
@@ -79,22 +104,46 @@ def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
     data = json.loads(content)
     raw_bboxes = data.get("bboxes", [])
 
+    # 记录 VLM 的原始响应到日志文件，便于调试
+    save_json_log(
+        agent_name="poster_text_grounding",
+        func_name="vlm_grounding_raw",
+        payload={
+            "image_size": {"width": w, "height": h},
+            "model": DEFAULT_GROUNDING_VLM_MODEL,
+            "raw_response": content,
+            "parsed_bboxes": raw_bboxes,
+        },
+    )
+    log_agent_info(
+        "poster_text_grounding",
+        f"vlm raw response: image_size=({w}, {h}), raw_bboxes={raw_bboxes}"
+    )
+
     bboxes: List[BBox] = []
     for box in raw_bboxes:
         if not isinstance(box, (list, tuple)) or len(box) != 4:
+            log_agent_warning("poster_text_grounding", f"invalid bbox format: {box}")
             continue
-        x0, y0, x1, y1 = map(int, box)
+        
+        # 处理可能的归一化坐标
+        x0, y0, x1, y1 = _maybe_denormalize_bbox(list(map(float, box)), w, h)
+        
         # 简单合法性检查与裁剪
         x0 = max(0, min(x0, w))
         x1 = max(0, min(x1, w))
         y0 = max(0, min(y0, h))
         y1 = max(0, min(y1, h))
         if x1 <= x0 or y1 <= y0:
+            log_agent_warning("poster_text_grounding", f"invalid bbox after denorm: ({x0}, {y0}, {x1}, {y1})")
             continue
         bboxes.append((x0, y0, x1, y1))
-    assert len(bboxes) > 0, "No bboxes found"
+    
+    if len(bboxes) == 0:
+        log_agent_warning("poster_text_grounding", "No valid bboxes found from VLM response")
+        raise ValueError(f"No valid bboxes found. raw_bboxes={raw_bboxes}, image_size=({w}, {h})")
 
-    log_agent_info("poster_text_grounding", f"vlm grounded {len(bboxes)} regions: {bboxes}")
+    log_agent_info("poster_text_grounding", f"vlm grounded {len(bboxes)} regions (after denorm): {bboxes}")
     return bboxes
 
 
