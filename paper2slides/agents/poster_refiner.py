@@ -32,25 +32,6 @@ _MAX_ROUNDS_DEFAULT = 3
 _BBOX_LIMIT_DEFAULT = 5
 
 
-def _append_debug_ndjson(message: str, data: dict, *, hypothesis_id: str) -> None:
-    """Debug-mode instrumentation. Writes NDJSON to local debug log path.
-
-    Note: In server runtime, this may not be accessible; we also persist key info via save_json_log.
-    """
-    try:
-        payload = {
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": hypothesis_id,
-            "location": "paper2slides/agents/poster_refiner.py",
-            "message": message,
-            "data": data,
-            "timestamp": int(__import__("time").time() * 1000),
-        }
-        with open("/Users/yanzexuan/code/.cursor/debug.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
 
 class PosterRefinerAgent:
     """PosterRefinerAgent (agent-driven).
@@ -86,16 +67,6 @@ class PosterRefinerAgent:
             "api_key": raw_key,
             "base_url": DEFAULT_CHAT_COMPLETIONS_URL,
         }
-
-        _append_debug_ndjson(
-            "llm_cfg_selected",
-            {
-                "model_type": self._llm_cfg.get("model_type"),
-                "base_url": self._llm_cfg.get("base_url"),
-                "model": self._llm_cfg.get("model"),
-            },
-            hypothesis_id="B",
-        )
         self._function_list = [
             "poster_text_score",
             "poster_text_grounding",
@@ -203,20 +174,6 @@ class PosterRefinerAgent:
 
         src_prompt = self._build_src_prompt()
 
-        # 记录本次 run 的上下文，便于 server 端排查
-        _append_debug_ndjson(
-            "run_context_prepared",
-            {
-                "model_type": self._llm_cfg.get("model_type"),
-                "model": self._llm_cfg.get("model"),
-                "model_server": self._llm_cfg.get("model_server"),
-                "azure_endpoint": self._llm_cfg.get("azure_endpoint"),
-                "api_version": self._llm_cfg.get("api_version"),
-                "max_rounds": int(max_rounds),
-                "bbox_limit": int(bbox_limit),
-            },
-            hypothesis_id="A",
-        )
         save_json_log(
             agent_name=_AGENT_NAME,
             func_name="run_context",
