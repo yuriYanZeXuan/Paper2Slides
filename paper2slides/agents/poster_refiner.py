@@ -280,11 +280,19 @@ class PosterRefinerAgent:
                 + "- Output MUST be a single valid JSON object, with no extra text.\n"
                 + "- You may include progress/thoughts ONLY inside JSON fields (e.g., thoughts/history).\n"
                 + "- Do NOT wrap JSON in markdown fences.\n"
+                + "- Do NOT call any tools. Just output the JSON directly.\n"
             )
             strict_messages = [{"role": "user", "content": f"{strict_user_prompt}\n\nContext(JSON): {json.dumps(context, ensure_ascii=False)}"}]
 
+            # 使用不带工具的 Assistant，强制 Agent 只能输出纯文本 JSON
+            strict_assistant = Assistant(
+                llm=self._llm_cfg,
+                function_list=[],  # 不注册任何工具
+                system_message=self._system_message,
+            )
+
             final_content2: str | None = None
-            for chunk in tool_assistant.run(strict_messages):
+            for chunk in strict_assistant.run(strict_messages):
                 for msg in chunk:
                     if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
                         c = msg["content"]
