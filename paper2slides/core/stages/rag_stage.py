@@ -33,13 +33,9 @@ def _get_image_mime_type(image_path: str) -> str:
 
 def _encode_image_to_base64(image_path: str) -> str:
     """Encode image file to base64 string"""
-    try:
-        with open(image_path, "rb") as image_file:
-            encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-        return encoded_string
-    except Exception as e:
-        logger.error(f"Failed to encode image {image_path}: {e}")
-        return ""
+    with open(image_path, "rb") as image_file:
+        encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
+    return encoded_string
 
 
 def _replace_images_with_base64(markdown_content: str, markdown_base_path: str) -> Tuple[List, int]:

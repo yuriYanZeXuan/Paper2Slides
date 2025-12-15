@@ -285,14 +285,7 @@ def save_bbox_visualization(
     vis_img = image.copy()
     draw = ImageDraw.Draw(vis_img)
 
-    # 尝试加载字体，失败则使用默认字体
-    try:
-        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 20)
-    except (OSError, IOError):
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
-        except (OSError, IOError):
-            font = ImageFont.load_default()
+    font = ImageFont.load_default()
 
     for i, bbox in enumerate(bboxes):
         x0, y0, x1, y1 = bbox

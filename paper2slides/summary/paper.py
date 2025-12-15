@@ -243,20 +243,16 @@ def _extract_text_from_markdown(md_path: str, max_chars: int = 3000) -> str:
         md_path: Path to markdown file
         max_chars: Maximum characters to read (metadata is usually at the beginning)
     """
-    try:
-        with open(md_path, 'r', encoding='utf-8') as f:
-            content = f.read(max_chars)
-        
-        # Remove image links: ![](images/xxx.jpg) or ![alt](path)
-        content = re.sub(r'!\[.*?\]\(.*?\)', '', content)
-        
-        # Remove excessive blank lines
-        content = re.sub(r'\n{3,}', '\n\n', content)
-        
-        return content.strip()
-    except Exception as e:
-        print(f"[Warning] Failed to read markdown {md_path}: {e}")
-        return ""
+    with open(md_path, 'r', encoding='utf-8') as f:
+        content = f.read(max_chars)
+    
+    # Remove image links: ![](images/xxx.jpg) or ![alt](path)
+    content = re.sub(r'!\[.*?\]\(.*?\)', '', content)
+    
+    # Remove excessive blank lines
+    content = re.sub(r'\n{3,}', '\n\n', content)
+    
+    return content.strip()
 
 
 def _build_single_file_prompt(text: str) -> str:

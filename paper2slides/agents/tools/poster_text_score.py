@@ -95,13 +95,6 @@ class PosterTextScore(BaseTool):
     def call(self, params: Union[str, dict], **kwargs) -> str:
         params = self._verify_json_format_args(params)
         image_path = params['image_path']
-
-        try:
-            img = Image.open(image_path).convert("RGB")
-        except Exception:
-            score = 0.0
-            log_agent_warning("poster_text_score", f"failed to open image: {image_path}, return score={score}")
-            return json.dumps({'score': float(score)}, ensure_ascii=False)
-
+        img = Image.open(image_path).convert("RGB")
         score = score_poster_text_clarity_with_vlm(img)
         return json.dumps({'score': float(score)}, ensure_ascii=False)

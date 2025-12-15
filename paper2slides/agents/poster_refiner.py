@@ -152,13 +152,8 @@ class PosterRefinerAgent:
         est_tool_calls = int(max_rounds) * tool_calls_per_round + 5
         llm_budget = max(20, 2 * est_tool_calls)  # 2x safety factor
         os.environ["QWEN_AGENT_MAX_LLM_CALL_PER_RUN"] = str(llm_budget)
-        try:
-            from qwen_agent import settings as qwen_settings
-
-            qwen_settings.MAX_LLM_CALL_PER_RUN = int(llm_budget)
-        except Exception:
-            # 若运行环境不允许/版本差异，至少 env 已设置
-            pass
+        from qwen_agent import settings as qwen_settings
+        qwen_settings.MAX_LLM_CALL_PER_RUN = int(llm_budget)
 
         tool_assistant = Assistant(
             llm=self._llm_cfg,
@@ -269,49 +264,13 @@ class PosterRefinerAgent:
         )
 
         # Parse robustly; if invalid, rerun once with stricter constraints.
-        try:
-            result = parse_agent_final_json(final_content)
-        except Exception as e:
-            rerun = int(os.getenv("POSTER_REFINER_RERUN_ON_INVALID_FINAL_JSON", "1") or "1")
-            if rerun <= 0:
-                raise
-
-            strict_user_prompt = (
-                user_prompt
-                + "\n\nSTRICT MODE:\n"
-                + "- Output MUST be a single valid JSON object, with no extra text.\n"
-                + "- You may include progress/thoughts ONLY inside JSON fields (e.g., thoughts/history).\n"
-                + "- Do NOT wrap JSON in markdown fences.\n"
-                + "- Do NOT call any tools. Just output the JSON directly.\n"
-            )
-            strict_messages = [{"role": "user", "content": f"{strict_user_prompt}\n\nContext(JSON): {json.dumps(context, ensure_ascii=False)}"}]
-
-            # 使用不带工具的 Assistant，强制 Agent 只能输出纯文本 JSON
-            strict_assistant = Assistant(
-                llm=self._llm_cfg,
-                function_list=[],  # 不注册任何工具
-                system_message=self._system_message,
-            )
-
-            final_content2: str | None = None
-            for chunk in strict_assistant.run(strict_messages):
-                for msg in chunk:
-                    if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
-                        c = msg["content"]
-                        if isinstance(c, str) and c.strip():
-                            final_content2 = c
-
-            if not final_content2 or not str(final_content2).strip():
-                raise RuntimeError(f"Agent strict rerun still produced empty content; original_error={e!r}")
-
-            save_json_log(
-                agent_name=_AGENT_NAME,
-                func_name="agent_final_raw_strict_rerun",
-                payload={"raw": final_content2},
-                log_root=log_root,
-            )
-
-            result = parse_agent_final_json(final_content2)
+        result = parse_agent_final_json(final_content)
+        save_json_log(
+            agent_name=_AGENT_NAME,
+            func_name="agent_final_parsed",
+            payload=result,
+            log_root=log_root,
+        )
 
         assert "final_image_path" in result, "missing final_image_path in agent output"
         assert "final_score" in result, "missing final_score in agent output"

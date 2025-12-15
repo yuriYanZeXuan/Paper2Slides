@@ -358,67 +358,49 @@ class ContentPlanner:
         
         json_str = fix_invalid_escapes(json_str)
         
-        try:
-            data = json.loads(json_str)
-            items = data.get("slides") or data.get("sections") or []
+        data = json.loads(json_str)
+        items = data.get("slides") or data.get("sections") or []
+        
+        sections = []
+        total = len(items)
+        for idx, item in enumerate(items):
+            # Parse tables
+            tables = []
+            for t in item.get("tables", []):
+                tables.append(TableRef(
+                    table_id=t.get("table_id", ""),
+                    extract=t.get("extract", ""),
+                    focus=t.get("focus", ""),
+                ))
             
-            sections = []
-            total = len(items)
-            for idx, item in enumerate(items):
-                # Parse tables
-                tables = []
-                for t in item.get("tables", []):
-                    tables.append(TableRef(
-                        table_id=t.get("table_id", ""),
-                        extract=t.get("extract", ""),
-                        focus=t.get("focus", ""),
-                    ))
-                
-                # Parse figures
-                figures = []
-                for f in item.get("figures", []):
-                    figures.append(FigureRef(
-                        figure_id=f.get("figure_id", ""),
-                        focus=f.get("focus", ""),
-                    ))
-                
-                # Auto-determine section_type based on position (slides only)
-                if is_slides:
-                    if idx == 0:
-                        section_type = "opening"
-                    elif idx == total - 1:
-                        section_type = "ending"
-                    else:
-                        section_type = "content"
+            # Parse figures
+            figures = []
+            for f in item.get("figures", []):
+                figures.append(FigureRef(
+                    figure_id=f.get("figure_id", ""),
+                    focus=f.get("focus", ""),
+                ))
+            
+            # Auto-determine section_type based on position (slides only)
+            if is_slides:
+                if idx == 0:
+                    section_type = "opening"
+                elif idx == total - 1:
+                    section_type = "ending"
                 else:
                     section_type = "content"
-                
-                sections.append(Section(
-                    id=item.get("id", f"section_{idx+1}"),
-                    title=item.get("title", ""),
-                    section_type=section_type,
-                    content=item.get("content", ""),
-                    tables=tables,
-                    figures=figures,
-                ))
-            return sections
+            else:
+                section_type = "content"
             
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing failed: {e}")
-            logger.error(f"Failed to parse JSON string (first 500 chars): {json_str[:500]}")
-            logger.warning("Using fallback sections due to JSON parse error")
-            return self._fallback_sections()
-        except Exception as e:
-            logger.error(f"Unexpected error in _parse_sections: {e}")
-            logger.warning("Using fallback sections due to unexpected error")
-            return self._fallback_sections()
-    
-    def _fallback_sections(self) -> List[Section]:
-        """Return minimal fallback sections if parsing fails."""
-        return [
-            Section(id="section_01", title="Title", section_type="opening", content=""),
-            Section(id="section_02", title="Content", section_type="content", content=""),
-        ]
+            sections.append(Section(
+                id=item.get("id", f"section_{idx+1}"),
+                title=item.get("title", ""),
+                section_type=section_type,
+                content=item.get("content", ""),
+                tables=tables,
+                figures=figures,
+            ))
+        return sections
     
     def _load_figure_images(self, origin) -> List[Dict]:
         """Load figure images as base64 with caption."""

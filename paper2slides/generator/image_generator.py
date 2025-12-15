@@ -56,31 +56,25 @@ def process_custom_style(client: OpenAI, user_style: str, model: str = None) -> 
     """Process user's custom style request with LLM."""
     model = model or os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
     
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": STYLE_PROCESS_PROMPT.format(user_style=user_style)}],
-            # extra_body logic removed here as it's not standard for text generation and handled by client wrapper if needed
-            response_format={"type": "json_object"},
-        )
-        
-        # Handle wrapper response object which might differ slightly from raw SDK response
-        if hasattr(response, 'choices') and len(response.choices) > 0:
-             content = response.choices[0].message.content
-        else:
-             raise ValueError("Empty response from LLM")
-
-        result = json.loads(content)
-        return ProcessedStyle(
-            style_name=result.get("style_name", ""),
-            color_tone=result.get("color_tone", ""),
-            special_elements=result.get("special_elements", ""),
-            decorations=result.get("decorations", ""),
-            valid=result.get("valid", False),
-            error=result.get("error"),
-        )
-    except Exception as e:
-        return ProcessedStyle(style_name="", color_tone="", special_elements="", decorations="", valid=False, error=str(e))
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": STYLE_PROCESS_PROMPT.format(user_style=user_style)}],
+        response_format={"type": "json_object"},
+    )
+    
+    if not (hasattr(response, 'choices') and len(response.choices) > 0):
+        raise ValueError("Empty response from LLM")
+    
+    content = response.choices[0].message.content
+    result = json.loads(content)
+    return ProcessedStyle(
+        style_name=result.get("style_name", ""),
+        color_tone=result.get("color_tone", ""),
+        special_elements=result.get("special_elements", ""),
+        decorations=result.get("decorations", ""),
+        valid=result.get("valid", False),
+        error=result.get("error"),
+    )
 
 
 class ImageGenerator:

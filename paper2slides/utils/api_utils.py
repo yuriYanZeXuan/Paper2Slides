@@ -37,16 +37,13 @@ def load_env_api_key(key_type: str = "text") -> str:
     3. RUNWAY_API_KEY
     4. OPENAI_API_KEY
     """
-    try:
-        from dotenv import load_dotenv
-        project_root = Path(__file__).parent.parent.parent
-        env_path = project_root / ".env"
-        if env_path.exists():
-            load_dotenv(dotenv_path=env_path, override=False)
-        else:
-            load_dotenv()
-    except Exception:
-        pass
+    from dotenv import load_dotenv
+    project_root = Path(__file__).parent.parent.parent
+    env_path = project_root / ".env"
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path, override=False)
+    else:
+        load_dotenv()
 
     if key_type == "image":
         return (
