@@ -171,17 +171,14 @@ def ground_poster_text_regions_with_mineru(image: Image.Image) -> Tuple[List[BBo
         if not text_content:
             continue
         
-        # 解析坐标 - MinerU 返回的是 PDF 坐标
-        # PDF 标准是 72 点/英寸，图片转换为 PDF 时 PIL 使用默认 DPI
-        # 需要根据实际 PDF 页面尺寸与图片尺寸的比例进行转换
+        # 解析坐标 - MinerU bbox 已经是像素坐标（与 page_size 一致）
         x0_raw, y0_raw, x1_raw, y1_raw = map(float, bbox)
         
-        # 获取 PDF 页面尺寸（如果可用）
-        page_width = middle_json.get("pdf_info", {}).get("page_width", w)
-        page_height = middle_json.get("pdf_info", {}).get("page_height", h)
+        # 获取 PDF 页面尺寸：middle_json["pdf_info"][0]["page_size"] = [width, height]
+        page_size = middle_json["pdf_info"][0].get("page_size", [w, h])
+        page_width, page_height = page_size[0], page_size[1]
         
-        # 如果 PDF 页面尺寸与图片不同，需要缩放坐标
-        # 通常 PIL 保存 PDF 时会按 72 DPI 来计算页面尺寸
+        # 缩放坐标到实际图片尺寸
         scale_x = w / page_width if page_width else 1.0
         scale_y = h / page_height if page_height else 1.0
         
