@@ -257,19 +257,13 @@ class PosterRefinerAgent:
         if not final_content or not str(final_content).strip():
             raise RuntimeError("Qwen-Agent did not produce non-empty assistant content")
 
-        # Persist raw output for debugging before parsing
-        save_json_log(
-            agent_name=_AGENT_NAME,
-            func_name="agent_final_raw",
-            payload={"raw": final_content},
-            log_root=log_root,
-        )
-
         # Parse robustly; if invalid, rerun once with stricter constraints.
         result = parse_agent_final_json(final_content)
+        
+        # 保存解析后的 agent 输出
         save_json_log(
             agent_name=_AGENT_NAME,
-            func_name="agent_final_parsed",
+            func_name="agent_final",
             payload=result,
             log_root=log_root,
         )
@@ -279,13 +273,6 @@ class PosterRefinerAgent:
         assert "rounds" in result, "missing rounds in agent output"
         assert "history" in result, "missing history in agent output"
 
-        # 保存 agent 的最终输出，便于服务端排查
-        save_json_log(
-            agent_name=_AGENT_NAME,
-            func_name="agent_final",
-            payload=result,
-            log_root=log_root,
-        )
         final_image_path = str(result["final_image_path"])
 
         out = Image.open(final_image_path).convert("RGB")

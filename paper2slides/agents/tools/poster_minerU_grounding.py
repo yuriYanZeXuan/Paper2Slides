@@ -6,7 +6,7 @@
 import io
 import json
 import os
-import tempfile
+import threading
 from pathlib import Path
 from typing import List, Tuple, Union, Dict, Any
 
@@ -14,7 +14,7 @@ from PIL import Image
 
 from qwen_agent.tools.base import BaseTool, register_tool
 from paper2slides.utils.agent_logging import log_agent_info, log_agent_success, log_agent_warning
-from paper2slides.utils.agent_artifact_logging import save_bbox_visualization, save_json_log
+from paper2slides.utils.agent_artifact_logging import save_bbox_visualization, save_json_log, get_default_log_root
 
 from mineru.backend.pipeline.pipeline_analyze import doc_analyze as pipeline_doc_analyze
 from mineru.backend.pipeline.model_json_to_middle_json import result_to_middle_json as pipeline_result_to_middle_json
@@ -23,6 +23,10 @@ from mineru.data.data_reader_writer import FileBasedDataWriter
 from mineru.utils.enum_class import MakeMode
 
 BBox = Tuple[int, int, int, int]
+
+# 用于生成递增的 MinerU 调用序号
+_mineru_call_counter = 0
+_mineru_call_lock = threading.Lock()
 
 
 def _image_to_pdf_bytes(image: Image.Image) -> bytes:
@@ -70,14 +74,11 @@ def ground_poster_text_regions_with_mineru(image: Image.Image) -> Tuple[List[BBo
     - region_details: 完整的 region 信息，包含 text_content
     """
     w, h = image.size
-    
-    # 在 MinerU 执行期临时覆盖 CUDA_VISIBLE_DEVICES，并在结束后恢复
-    prev_cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
+
+    # 设置 CUDA_VISIBLE_DEVICES（如果配置了）
     cvd = _resolve_mineru_cuda_visible_devices()
-    applied = False
     if cvd is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = cvd
-        applied = True
         log_agent_info("poster_text_grounding", f"mineru: set CUDA_VISIBLE_DEVICES='{cvd}'")
     
     # 将图片转换为 PDF 字节流
@@ -85,37 +86,53 @@ def ground_poster_text_regions_with_mineru(image: Image.Image) -> Tuple[List[BBo
     
     log_agent_info("poster_text_grounding", f"converting image ({w}x{h}) to PDF for MinerU processing")
     
-    # 创建临时目录用于 MinerU 输出
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir)
-        image_writer = FileBasedDataWriter(str(tmp_path))
-        
-        # 调用 MinerU pipeline 分析
-        infer_results, all_image_lists, all_pdf_docs, lang_list, ocr_enabled_list = pipeline_doc_analyze(
-            [pdf_bytes], 
-            ["ch"],  # 语言设置：中英混合
-            parse_method="auto", 
-            formula_enable=False,  # 不需要公式识别
-            table_enable=False,  # 不需要表格识别
-        )
-        
-        model_list = infer_results[0]
-        images_list = all_image_lists[0]
-        pdf_doc = all_pdf_docs[0]
-        _lang = lang_list[0]
-        _ocr_enable = ocr_enabled_list[0]
-        
-        # 生成 middle_json
-        middle_json = pipeline_result_to_middle_json(
-            model_list, images_list, pdf_doc, image_writer, _lang, _ocr_enable, True
-        )
-        
-        # 生成 content_list
-        content_list = pipeline_union_make(
-            middle_json["pdf_info"], 
-            MakeMode.CONTENT_LIST, 
-            "assets"
-        )
+    # 获取递增的调用序号，用于创建唯一的输出目录
+    global _mineru_call_counter
+    with _mineru_call_lock:
+        _mineru_call_counter += 1
+        call_idx = _mineru_call_counter
+    
+    # 使用 agent_logs 下的持久化目录，便于调试
+    log_root = get_default_log_root("poster_text_grounding")
+    mineru_output_dir = log_root / "mineru_outputs" / f"call_{call_idx:03d}"
+    mineru_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    log_agent_info("poster_text_grounding", f"MinerU output dir: {mineru_output_dir}")
+    
+    image_writer = FileBasedDataWriter(str(mineru_output_dir))
+    
+    # 调用 MinerU pipeline 分析
+    infer_results, all_image_lists, all_pdf_docs, lang_list, ocr_enabled_list = pipeline_doc_analyze(
+        [pdf_bytes], 
+        ["ch"],  # 语言设置：中英混合
+        parse_method="auto", 
+        formula_enable=False,  # 不需要公式识别
+        table_enable=False,  # 不需要表格识别
+    )
+    
+    model_list = infer_results[0]
+    images_list = all_image_lists[0]
+    pdf_doc = all_pdf_docs[0]
+    _lang = lang_list[0]
+    _ocr_enable = ocr_enabled_list[0]
+    
+    # 生成 middle_json
+    middle_json = pipeline_result_to_middle_json(
+        model_list, images_list, pdf_doc, image_writer, _lang, _ocr_enable, True
+    )
+    
+    # 生成 content_list
+    content_list = pipeline_union_make(
+        middle_json["pdf_info"], 
+        MakeMode.CONTENT_LIST, 
+        "assets"
+    )
+    
+    # 保存 middle_json 和 content_list 到输出目录，便于调试
+    with open(mineru_output_dir / "middle_json.json", "w", encoding="utf-8") as f:
+        json.dump(middle_json, f, ensure_ascii=False, indent=2)
+    with open(mineru_output_dir / "content_list.json", "w", encoding="utf-8") as f:
+        json.dump(content_list, f, ensure_ascii=False, indent=2)
     
     log_agent_info(
         "poster_text_grounding",
@@ -217,7 +234,7 @@ def ground_poster_text_regions_with_mineru(image: Image.Image) -> Tuple[List[BBo
     if len(bboxes) == 0:
         log_agent_warning("poster_text_grounding", "No valid text regions found from MinerU")
         raise ValueError(f"No valid text regions found. content_list_count={len(content_list)}, image_size=({w}, {h})")
-    
+
     log_agent_info("poster_text_grounding", f"MinerU grounded {len(bboxes)} text regions: {bboxes}")
     return bboxes, region_details
 
