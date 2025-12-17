@@ -27,7 +27,8 @@ def main(
     tar_prompt: str,
     bbox: Optional[List[int]] = None,
     output_path: str = "output.png",
-    resize: bool = True
+    resize: bool = True,
+    model_path: str = "Tongyi-MAI/Z-Image-Turbo"
 ):
     """
     Main function to edit an image using ZImageFlowEdit tool.
@@ -42,6 +43,7 @@ def main(
 
     print(f"Processing Image: {image_path}")
     print(f"Output Path: {output_path}")
+    print(f"Using Model Path: {model_path}")
 
     # 2. Load and Preprocess
     original_img = Image.open(image_path).convert("RGB")
@@ -76,6 +78,7 @@ def main(
         "src_prompt": src_prompt,
         "tar_prompt": tar_prompt,
         "output_path": intermediate_output_path,
+        "model_name": model_path
     }
     
     print("Invoking ZImageFlowEdit tool...")
@@ -116,6 +119,7 @@ if __name__ == "__main__":
     parser.add_argument("--bbox", type=str, help="Bounding box as x1,y1,x2,y2 (e.g., '100,100,300,300')")
     parser.add_argument("--output_path", type=str, default="output.png", help="Output path")
     parser.add_argument("--no_resize", action="store_true", help="Disable resizing to 1024 longest side")
+    parser.add_argument("--model_path", type=str, default="Tongyi-MAI/Z-Image-Turbo", help="Path or name of Z-Image model")
     
     args = parser.parse_args()
     
@@ -129,5 +133,6 @@ if __name__ == "__main__":
         tar_prompt=args.tar_prompt,
         bbox=bbox_list,
         output_path=args.output_path,
-        resize=not args.no_resize
+        resize=not args.no_resize,
+        model_path=args.model_path
     )
