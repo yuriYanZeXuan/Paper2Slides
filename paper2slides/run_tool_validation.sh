@@ -5,11 +5,11 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 # Configuration
-IMAGE_PATH="/Users/yanzexuan/Downloads/test.jpg"
-SRC_PROMPT="original text"
-TAR_PROMPT="edited text"
-BBOX="100,100,500,500"
-OUTPUT_PATH="$SCRIPT_DIR/validation_result.png"
+IMAGE_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Paper2Slides/outputs/agent_logs/run_016/outputs/poster.png"  # 替换为实际图片路径
+SRC_PROMPT="Black text 'Complhomd&Molivation'"
+TAR_PROMPT="Black text 'Background & Motivation'"
+BBOX="100,350,321,372"    
+OUTPUT_PATH="validation_result.png"
 
 python -m paper2slides.tool_validation \
     --image_path "$IMAGE_PATH" \
@@ -17,4 +17,3 @@ python -m paper2slides.tool_validation \
     --tar_prompt "$TAR_PROMPT" \
     --bbox "$BBOX" \
     --output_path "$OUTPUT_PATH"
-
