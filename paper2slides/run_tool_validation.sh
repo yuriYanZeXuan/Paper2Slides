@@ -8,7 +8,7 @@ export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 IMAGE_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Paper2Slides/outputs/agent_logs/run_016/outputs/poster.png"
 SRC_PROMPT="Black text 'Complhomd&Molivation'"
 TAR_PROMPT="Black text 'Background & Motivation'"
-BBOX="100,350,321,372"
+BBOX="100,350,321,390"
 OUTPUT_PATH="validation_result.png"
 
 # 从环境变量获取 LOCAL_IMAGE_MODEL，如果未设置则使用默认路径

@@ -102,8 +102,8 @@ class ZImageFlowEdit(BaseTool):
             num_inference_steps=20,
             src_guidance_scale=1.5,
             tar_guidance_scale=5.5,
-            n_max=18,
-            n_min=0,
+            n_max=20,
+            n_min=10,
             seed=42,
         )
         edited.save(output_path)

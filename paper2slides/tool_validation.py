@@ -93,6 +93,12 @@ def main(
     print(f"Tool execution successful. Saved intermediate output to: {intermediate_output_path}")
     print(f"Edited image size: {edited_img.size}")
     
+    # Save no-resize result if we used bbox or resize (showing the raw output of the model)
+    if bbox or resize:
+        no_resize_output_path = os.path.join(output_dir, f"{base_name}_no_resize_output.png")
+        edited_img.save(no_resize_output_path)
+        print(f"Saved raw model output (no resize/paste) to: {no_resize_output_path}")
+    
     if bbox:
         # Resize edited crop back to original bbox dimensions if necessary
         bbox_w = x2 - x1
