@@ -80,11 +80,14 @@ class PosterRefinerAgent:
             "You are a helpful assistant that improves text clarity in academic poster images.\n"
             "You have access to tools for: scoring text clarity, locating unclear text regions, matching patch text to plan spans, "
             "and applying FlowEdit to enhance specific regions.\n\n"
-            "Important: Start by calling tools immediately to execute the task. Do not just describe or plan.\n\n"
+            "Important behavior:\n"
+            "- Execute tool calls in sequence without pausing to explain between calls.\n"
+            "- Continue calling tools until the task is complete.\n"
+            "- Only output your final JSON response after all tool calls are done.\n\n"
             "Workflow:\n"
             "1. Keep track of the current working image_path after each edit.\n"
-            "2. Use poster_text_score to assess clarity. If score >= clarity_threshold, you can stop.\n"
-            "3. If score < clarity_threshold, call poster_text_grounding to get bboxes (limit to bbox_limit).\n"
+            "2. Use poster_text_score to assess clarity. If score >= clarity_threshold, output final JSON.\n"
+            "3. If score < clarity_threshold, immediately call poster_text_grounding to get bboxes (limit to bbox_limit).\n"
             "4. For each bbox, if plan_text_spans_path is provided, call poster_text_match(image_path,bbox,plan_text_spans_path)\n"
             "   to get matched_text; use it to craft a concise tar_prompt (keep matched_text <= 200 chars).\n"
             "   If matched_text is empty or plan_text_spans_path is not available, use a generic tar_prompt:\n"
@@ -92,8 +95,8 @@ class PosterRefinerAgent:
             "5. Apply edits with poster_patch_flowedit, saving outputs under work_dir.\n"
             "6. Use zimage_flowedit as a fallback option (whole-image edit), and save outputs under work_dir.\n"
             "7. You may iterate up to max_rounds.\n\n"
-            "When all tool calls are complete, output a JSON object with these fields:\n"
-            "final_image_path (string), final_score (float), rounds (int), history (list), thoughts (optional list).\n"
+            "Final output format (JSON only):\n"
+            "{\"final_image_path\": \"...\", \"final_score\": float, \"rounds\": int, \"history\": [...], \"thoughts\": [...]}\n"
         )
 
         log_agent_start("poster_refiner_agent")
@@ -201,12 +204,12 @@ class PosterRefinerAgent:
             "- work_dir: directory for saving output images\n"
             "- src_prompt: global style description\n"
             "- clarity_threshold, max_rounds, bbox_limit\n\n"
-            "Steps to execute:\n"
+            "Execute these steps by calling tools directly:\n"
             "1) Set current_image_path = init_image_path.\n"
             "2) For round=1..max_rounds:\n"
             "   - Call poster_text_score(image_path=current_image_path) to get score.\n"
-            "   - If score >= clarity_threshold: you can stop early.\n"
-            "   - Call poster_text_grounding(image_path=current_image_path) to get bboxes.\n"
+            "   - If score >= clarity_threshold: output final JSON and stop.\n"
+            "   - Otherwise, immediately call poster_text_grounding(image_path=current_image_path) to get bboxes.\n"
             "   - Process up to bbox_limit bboxes.\n"
             "   - For each bbox i:\n"
             "       * If plan_text_spans_path is provided: call poster_text_match to get matched_text.\n"
@@ -215,10 +218,10 @@ class PosterRefinerAgent:
             "       * Call poster_patch_flowedit with bbox, src_prompt, tar_prompt,\n"
             "         output_image_path=f\"{work_dir}/r{round}_b{i}.png\", model_name, device, upscale_factor=2.\n"
             "       * Update current_image_path to the returned output_image_path.\n"
-            "3) After finishing, call poster_text_score once more for final_score.\n\n"
-            "Start now by calling poster_text_score on the init_image_path.\n\n"
-            "When complete, output JSON:\n"
-            "{\"final_image_path\": \"...\", \"final_score\": 8.5, \"rounds\": 2, \"history\": [...], \"thoughts\": [...]}\n"
+            "3) After finishing, call poster_text_score once more for final_score, then output final JSON.\n\n"
+            "Begin by calling poster_text_score now. Do not output text between tool calls.\n\n"
+            "Final JSON format:\n"
+            "{\"final_image_path\": \"path\", \"final_score\": 8.5, \"rounds\": 2, \"history\": [...], \"thoughts\": [...]}\n"
         )
 
         context = {
@@ -235,18 +238,30 @@ class PosterRefinerAgent:
         messages = [{"role": "user", "content": f"{user_prompt}\n\nContext(JSON): {json.dumps(context, ensure_ascii=False)}"}]
 
         final_content: str | None = None
+        all_assistant_contents: list[str] = []
         for chunk in tool_assistant.run(messages):
             for msg in chunk:
                 if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
                     c = msg["content"]
                     # Some gateways may return whitespace-only content; ignore those.
                     if isinstance(c, str) and c.strip():
-                        final_content = c
+                        all_assistant_contents.append(c)
+                        # Only accept content that looks like JSON as final output
+                        stripped = c.strip()
+                        if stripped.startswith("{") or stripped.startswith("```"):
+                            final_content = c
 
-        if not final_content or not str(final_content).strip():
+        if not final_content:
+            # INSERT_YOUR_CODE
+            # 保存 all_assistant_contents 到 agent_logs 目录下，便于调试与追溯
+            with open("Agent_debug.log", "w", encoding="utf-8") as f:
+                for i, content in enumerate(all_assistant_contents):
+                    f.write(f"--- chunk {i+1} ---\n")
+                    f.write(content)
+                    f.write("\n\n")
             raise RuntimeError("Qwen-Agent did not produce non-empty assistant content")
 
-        # Parse robustly; if invalid, rerun once with stricter constraints.
+        # Parse robustly; if invalid, provide more context in error
         result = parse_agent_final_json(final_content)
         
         # 保存解析后的 agent 输出
