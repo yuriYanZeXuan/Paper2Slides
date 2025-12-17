@@ -82,50 +82,34 @@ def main(
         # Default model and device will be used if not specified
     }
     
-    try:
-        print(f"Running ZImageFlowEdit with params: {params}")
-        # Call the tool
-        tool.call(params)
+    print(f"Running ZImageFlowEdit with params: {params}")
+    # Call the tool
+    tool.call(params)
+    
+    # Process the result
+    edited_img = Image.open(tmp_output_path).convert("RGB")
+    
+    if bbox:
+        # If we had a bbox, we need to paste the result back
         
-        # Process the result
-        if os.path.exists(tmp_output_path):
-            edited_img = Image.open(tmp_output_path).convert("RGB")
+        # 1. Resize edited crop back to original bbox dimensions if necessary
+        bbox_w = x2 - x1
+        bbox_h = y2 - y1
+        
+        if edited_img.size != (bbox_w, bbox_h):
+                edited_img = edited_img.resize((bbox_w, bbox_h), Image.Resampling.LANCZOS)
+        
+        # 2. Paste back into a copy of the original image
+        final_img = original_img.copy()
+        final_img.paste(edited_img, (x1, y1))
+    else:
+        # If no bbox, the result is the whole image
+        final_img = edited_img
+        
+    # Save final result
+    final_img.save(output_path)
+    print(f"Saved result to {output_path}")
             
-            if bbox:
-                # If we had a bbox, we need to paste the result back
-                
-                # 1. Resize edited crop back to original bbox dimensions if necessary
-                bbox_w = x2 - x1
-                bbox_h = y2 - y1
-                
-                if edited_img.size != (bbox_w, bbox_h):
-                     edited_img = edited_img.resize((bbox_w, bbox_h), Image.Resampling.LANCZOS)
-                
-                # 2. Paste back into a copy of the original image
-                final_img = original_img.copy()
-                final_img.paste(edited_img, (x1, y1))
-            else:
-                # If no bbox, the result is the whole image
-                final_img = edited_img
-                
-            # Save final result
-            final_img.save(output_path)
-            print(f"Saved result to {output_path}")
-        else:
-            print("Error: Tool did not generate output file.")
-            
-    finally:
-        # Cleanup temporary files
-        if os.path.exists(tmp_input_path):
-            try:
-                os.remove(tmp_input_path)
-            except OSError:
-                pass
-        if os.path.exists(tmp_output_path):
-            try:
-                os.remove(tmp_output_path)
-            except OSError:
-                pass
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Tool Validation Script for ZImageFlowEdit")
