@@ -80,7 +80,8 @@ class PosterRefinerAgent:
             "You are a helpful assistant that improves text clarity in academic poster images.\n"
             "You have access to tools for: scoring text clarity, locating unclear text regions, matching patch text to plan spans, "
             "and applying FlowEdit to enhance specific regions.\n\n"
-            "Workflow guidelines:\n"
+            "Important: Start by calling tools immediately to execute the task. Do not just describe or plan.\n\n"
+            "Workflow:\n"
             "1. Keep track of the current working image_path after each edit.\n"
             "2. Use poster_text_score to assess clarity. If score >= clarity_threshold, you can stop.\n"
             "3. If score < clarity_threshold, call poster_text_grounding to get bboxes (limit to bbox_limit).\n"
@@ -91,12 +92,8 @@ class PosterRefinerAgent:
             "5. Apply edits with poster_patch_flowedit, saving outputs under work_dir.\n"
             "6. Use zimage_flowedit as a fallback option (whole-image edit), and save outputs under work_dir.\n"
             "7. You may iterate up to max_rounds.\n\n"
-            "When finished, please respond with a JSON object containing:\n"
-            "- final_image_path (string): path to the final image\n"
-            "- final_score (float): the final clarity score\n"
-            "- rounds (int): number of rounds completed\n"
-            "- history (list): items with round, score_before, bboxes, edits, score_after\n"
-            "- thoughts (optional list of strings): your reasoning/progress notes\n"
+            "When all tool calls are complete, output a JSON object with these fields:\n"
+            "final_image_path (string), final_score (float), rounds (int), history (list), thoughts (optional list).\n"
         )
 
         log_agent_start("poster_refiner_agent")
@@ -197,14 +194,14 @@ class PosterRefinerAgent:
         )
 
         user_prompt = (
-            "Please help improve the text clarity of a poster image.\n\n"
-            "You are given the following context:\n"
+            "Improve the text clarity of a poster image by calling the available tools.\n\n"
+            "Context:\n"
             "- init_image_path: the starting image\n"
             "- plan_text_spans_path: optional JSON file for matching\n"
             "- work_dir: directory for saving output images\n"
             "- src_prompt: global style description\n"
             "- clarity_threshold, max_rounds, bbox_limit\n\n"
-            "Suggested process:\n"
+            "Steps to execute:\n"
             "1) Set current_image_path = init_image_path.\n"
             "2) For round=1..max_rounds:\n"
             "   - Call poster_text_score(image_path=current_image_path) to get score.\n"
@@ -219,14 +216,9 @@ class PosterRefinerAgent:
             "         output_image_path=f\"{work_dir}/r{round}_b{i}.png\", model_name, device, upscale_factor=2.\n"
             "       * Update current_image_path to the returned output_image_path.\n"
             "3) After finishing, call poster_text_score once more for final_score.\n\n"
-            "Please respond with a JSON object like:\n"
-            "{\n"
-            "  \"final_image_path\": \"path/to/final/image.png\",\n"
-            "  \"final_score\": 8.5,\n"
-            "  \"rounds\": 2,\n"
-            "  \"history\": [...],\n"
-            "  \"thoughts\": [\"optional notes\"]\n"
-            "}\n"
+            "Start now by calling poster_text_score on the init_image_path.\n\n"
+            "When complete, output JSON:\n"
+            "{\"final_image_path\": \"...\", \"final_score\": 8.5, \"rounds\": 2, \"history\": [...], \"thoughts\": [...]}\n"
         )
 
         context = {
