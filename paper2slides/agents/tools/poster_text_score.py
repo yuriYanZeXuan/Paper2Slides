@@ -32,13 +32,15 @@ def score_poster_text_clarity_with_vlm(image: Image.Image) -> float:
 
     system_prompt = (
         "You are an expert at evaluating the visual clarity and legibility of text in poster images. "
-        "Score ONLY the readability of all text in the image."
+        "Score ONLY the readability of all text in the image. "
+        "You must respond with pure JSON only, no markdown, no code blocks, no extra text."
     )
     user_instructions = (
         "Look at this poster image and evaluate how clear and readable the text is overall.\n\n"
         "- Score range: 0.0 (completely unreadable) to 10.0 (perfectly sharp and legible).\n"
         "- Consider font sharpness, contrast, size, and whether small text can be read.\n"
-        "- Return ONLY a JSON object with a single field 'score', for example: {\"score\": 7.5}.\n"
+        "- Respond with ONLY the raw JSON object, do NOT wrap it in ```json``` or any markdown.\n"
+        "- Example response: {\"score\": 7.5}\n"
     )
 
     messages = [
