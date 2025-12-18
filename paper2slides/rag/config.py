@@ -47,7 +47,7 @@ class APIConfig:
     """Optional. If None, uses the project hardcoded gateway base_url (see `paper2slides.utils.api_utils`)."""
     
     llm_model: str = field(
-        default_factory=lambda: os.getenv("LLM_MODEL", "gpt-4o-mini")
+        default_factory=lambda: os.getenv("LLM_MODEL", "gemini-3-pro")
     )
     
     embedding_model: str = field(

@@ -14,13 +14,14 @@ from paper2slides.agents.tools import poster_minerU_grounding as _poster_text_gr
 from paper2slides.agents.tools import zimage_flowedit_tool as _zimage_flowedit_tool  # noqa: F401
 from paper2slides.agents.tools import poster_text_match as _poster_text_match_tool  # noqa: F401
 from paper2slides.agents.tools import poster_patch_flowedit as _poster_patch_flowedit_tool  # noqa: F401
-from qwen_agent.agents import Assistant
 from paper2slides.utils.agent_logging import *
 from paper2slides.utils.agent_artifact_logging import (
     save_json_log,
     get_default_log_root,
 )
-from paper2slides.utils.api_utils import DEFAULT_CHAT_COMPLETIONS_URL, load_env_api_key
+from paper2slides.utils.api_utils import *
+
+from qwen_agent.agents import Assistant
 from qwen_agent import settings as qwen_settings
 logger = get_logger(__name__)
 
@@ -29,7 +30,7 @@ BBox = Tuple[int, int, int, int]
 
 
 _AGENT_NAME = "poster_refiner"
-_TOOL_AGENT_MODEL = "gpt-4o"
+_TOOL_AGENT_MODEL = "gemini-3-pro"
 _MAX_ROUNDS_DEFAULT = 3
 _BBOX_LIMIT_DEFAULT = 5
 
@@ -64,10 +65,10 @@ class PosterRefinerAgent:
         # base_url 写死（不从环境变量读取），避免 /openai vs /openai/v1 导致 404
         # qwen_agent 对 OpenAI 兼容配置一般使用 model_type=openai + base_url
         self._llm_cfg = {
-            "model_type": "azure",
+            "model_type": "openai",
             "model": _TOOL_AGENT_MODEL,
             "api_key": raw_key,
-            "base_url": DEFAULT_CHAT_COMPLETIONS_URL,
+            "base_url": DEFAULT_CHAT_COMPLETIONS_URL_GEMINI,
         }
         self._function_list = [
             "poster_text_score",

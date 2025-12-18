@@ -54,7 +54,7 @@ class ProcessedStyle:
 
 def process_custom_style(client: OpenAI, user_style: str, model: str = None) -> ProcessedStyle:
     """Process user's custom style request with LLM."""
-    model = model or os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
+    model = model or os.getenv("LLM_MODEL", "gemini-3-pro")
     
     response = client.chat.completions.create(
         model=model,
