@@ -11,7 +11,7 @@ from paper2slides.utils.agent_logging import log_agent_info, log_agent_warning
 from paper2slides.utils.api_utils import get_openai_client
 
 
-DEFAULT_TEXT_VLM_MODEL = os.getenv("POSTER_TEXT_VLM_MODEL", "gpt-4o")
+DEFAULT_TEXT_VLM_MODEL = os.getenv("POSTER_TEXT_VLM_MODEL", "gemini-3-pro")
 
 
 def _encode_image_to_base64(image: Image.Image) -> str:

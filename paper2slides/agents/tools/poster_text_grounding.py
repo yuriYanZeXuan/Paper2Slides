@@ -14,7 +14,7 @@ from paper2slides.utils.api_utils import get_openai_client
 
 BBox = Tuple[int, int, int, int]
 
-DEFAULT_GROUNDING_VLM_MODEL = os.getenv("POSTER_TEXT_GROUNDING_MODEL", "gpt-4o")
+DEFAULT_GROUNDING_VLM_MODEL = os.getenv("POSTER_TEXT_GROUNDING_MODEL", "gemini-3-pro")
 
 
 def _encode_image_to_base64(image: Image.Image) -> str:

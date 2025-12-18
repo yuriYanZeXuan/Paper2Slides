@@ -13,7 +13,7 @@ from paper2slides.utils.agent_artifact_logging import save_json_log
 
 
 BBox = Tuple[int, int, int, int]
-_DEFAULT_TEXT_MATCH_MODEL = os.getenv("POSTER_TEXT_MATCH_MODEL", "gpt-4o")
+_DEFAULT_TEXT_MATCH_MODEL = os.getenv("POSTER_TEXT_MATCH_MODEL", "gemini-3-pro")
 
 _PLAN_SPANS_CACHE: dict[str, tuple[float, List[Dict[str, Any]]]] = {}
 
