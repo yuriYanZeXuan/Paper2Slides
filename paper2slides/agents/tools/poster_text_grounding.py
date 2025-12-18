@@ -61,7 +61,8 @@ def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
     system_prompt = (
         "You are an expert at analyzing poster layouts and detecting small or unclear text regions.\n"
         "You must return bounding boxes for regions where text is likely small, low-contrast, or hard to read.\n"
-        "You should provide your reasoning process and the text content within each region."
+        "You should provide your reasoning process and the text content within each region.\n"
+        "You must respond with pure JSON only, no markdown, no code blocks, no extra text."
     )
     user_instructions = (
         f"Analyze this poster image with dimensions: WIDTH = {w} pixels, HEIGHT = {h} pixels.\n\n"
@@ -75,7 +76,8 @@ def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
         f"- Top-left quarter: [0, 0, {w//2}, {h//2}]\n"
         f"- Bottom-right quarter: [{w//2}, {h//2}, {w}, {h}]\n"
         f"- A text region at upper-right: [{int(w*0.7)}, {int(h*0.1)}, {int(w*0.95)}, {int(h*0.25)}]\n\n"
-        "Return ONLY a JSON object with the following structure:\n"
+        "Respond with ONLY the raw JSON object, do NOT wrap it in ```json``` or any markdown.\n"
+        "Return a JSON object with the following structure:\n"
         "{\n"
         '  "thinking": "Your step-by-step reasoning: how you analyzed the poster, what regions you noticed, why they need enhancement...",\n'
         f'  "image_size": [{w}, {h}],\n'

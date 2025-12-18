@@ -86,13 +86,16 @@ def match_plan_text_for_patch(
 
     system_prompt = (
         "You are an expert at reading small text on academic posters and matching it to candidate text spans. "
-        "Your task is to find which candidate text best corresponds to the text appearing inside the given image patch."
+        "Your task is to find which candidate text best corresponds to the text appearing inside the given image patch. "
+        "You must respond with pure JSON only, no markdown, no code blocks, no extra text."
     )
     user_text = (
         "Here is a small image patch from a poster. First, read the text inside the patch.\n"
         "Then, from the candidate list below, choose the SINGLE candidate that best matches "
         "the text in this patch (based on semantic content, not style).\n\n"
-        "Return ONLY a JSON object of the form:\n"
+        "Respond with ONLY the raw JSON object, do NOT wrap it in ```json``` or any markdown.\n"
+        "Example response: {\"matched_index\": 1, \"matched_text\": \"example text\"}\n\n"
+        "JSON format:\n"
         "{\n"
         '  \"matched_index\": <integer index in [1..N]> or null if no good match,\n'
         '  \"matched_text\": \"the chosen candidate text or empty string\"\n'
