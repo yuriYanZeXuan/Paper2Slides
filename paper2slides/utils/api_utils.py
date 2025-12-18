@@ -331,7 +331,7 @@ def get_openai_client(
             
     if use_custom_http:
         # Return Unified client to support both OpenAI and Gemini models
-        return UnifiedCustomHTTPClient(api_key=final_api_key, base_url=DEFAULT_CHAT_COMPLETIONS_URL)
+        return UnifiedCustomHTTPClient(api_key=final_api_key)
     
     from openai import OpenAI
     return OpenAI(api_key=final_api_key, base_url=final_base_url)
@@ -360,7 +360,7 @@ def main() -> None:
         )
 
     # 明确使用 UnifiedCustomHTTPClient（支持 Gemini/OpenAI 自动切换），避免不同环境下 OpenAI SDK 行为差异
-    client = UnifiedCustomHTTPClient(api_key=api_key, base_url=DEFAULT_CHAT_COMPLETIONS_URL)
+    client = UnifiedCustomHTTPClient(api_key=api_key)
 
     print("[api_utils] chat_completions_url =", DEFAULT_CHAT_COMPLETIONS_URL)
     resp = client.chat.completions.create(

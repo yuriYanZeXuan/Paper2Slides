@@ -65,7 +65,7 @@ class PosterRefinerAgent:
         # base_url 写死（不从环境变量读取），避免 /openai vs /openai/v1 导致 404
         # qwen_agent 对 OpenAI 兼容配置一般使用 model_type=openai + base_url
         self._llm_cfg = {
-            "model_type": "openai",
+            "model_type": "oai",
             "model": _TOOL_AGENT_MODEL,
             "api_key": raw_key,
             "base_url": DEFAULT_CHAT_COMPLETIONS_URL_GEMINI,
