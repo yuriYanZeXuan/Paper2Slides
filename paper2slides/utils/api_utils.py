@@ -61,10 +61,14 @@ def get_openai_client(
     """
     Get configured OpenAI client.
     Args:
+        api_key: Optional API key. If not provided, will load from environment.
+        base_url: Optional base URL. Defaults to local gemini_proxy.
         key_type: "text" (default) or "image" to select appropriate env vars if api_key not provided.
     """
-    final_api_key = ""
-    final_base_url = "http://127.0.0.1:51958/v1"
-
+    # Use provided api_key, or load from environment based on key_type
+    final_api_key = api_key or load_env_api_key(key_type)
+    
+    # Use provided base_url, or default to local gemini_proxy
+    final_base_url = base_url or "http://127.0.0.1:51958/v1"
     
     return OpenAI(api_key=final_api_key, base_url=final_base_url)

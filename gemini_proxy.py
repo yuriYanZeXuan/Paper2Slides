@@ -18,26 +18,10 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from dotenv import load_dotenv
-
-# Load env from parent directory if exists
-load_dotenv()
+from paper2slides.utils.api_utils import load_env_api_key
 
 app = FastAPI()
-
-# Configuration
 GEMINI_ENDPOINT = "https://runway.devops.rednote.life/openai/google/v1:generateContent"
-
-def load_env_api_key() -> str:
-    """
-    Load API key from environment variables.
-    """
-    return (
-        os.getenv("GEMINI_TEXT_KEY")
-        or os.getenv("RUNWAY_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-        or ""
-    ).strip()
-
 
 def convert_openai_tools_to_gemini(tools: List[Dict]) -> List[Dict]:
     """
@@ -410,14 +394,7 @@ async def chat_completions(request: Request):
         functions = data.get("functions", [])  # Legacy format
         
         # Authorization
-        auth_header = request.headers.get("Authorization")
-        api_key = None
-        if auth_header and "Bearer " in auth_header:
-            api_key = auth_header.split("Bearer ")[1].strip()
-        
-        if not api_key:
-            # Fallback to env
-            api_key = load_env_api_key()
+        api_key = load_env_api_key()
 
         # Call Gemini
         client = GeminiClient(api_key=api_key)
