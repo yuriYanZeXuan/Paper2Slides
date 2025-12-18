@@ -227,6 +227,7 @@ class PosterRefinerAgent:
             for msg in chunk:
                 if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
                     c = msg["content"]
+                    print(c)
                     # Some gateways may return whitespace-only content; ignore those.
                     if isinstance(c, str) and c.strip():
                         all_assistant_contents.append(c)
