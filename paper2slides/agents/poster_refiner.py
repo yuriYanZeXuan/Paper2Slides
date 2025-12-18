@@ -19,7 +19,7 @@ from paper2slides.utils.agent_artifact_logging import (
     save_json_log,
     get_default_log_root,
 )
-from paper2slides.utils.api_utils import *
+from paper2slides.utils.api_utils import load_env_api_key
 
 from qwen_agent.agents import Assistant
 from qwen_agent import settings as qwen_settings
@@ -58,9 +58,9 @@ class PosterRefinerAgent:
         self.plan_text_spans: List[Dict[str, Any]] = list(plan_text_spans or [])
         self.plan_text_spans_path: str | None = plan_text_spans_path
         # Qwen-Agent 工具调度 Agent：用于自主决定是否需要继续 grounding/refine
-        # 注意：这里使用 OpenAI 兼容的配置（api_key/base_url/model），以适配项目现有网关。
+        # 注意：这里使用 OpenAI 兼容的配置（api_key/base_url/model），适配项目现有网关。
         raw_key = load_env_api_key("text")
-        assert raw_key, "No API key found for tool agent (RAG_LLM_API_KEY/GEMINI_TEXT_KEY/RUNWAY_API_KEY/OPENAI_API_KEY)"
+        assert raw_key, "No API key found for tool agent"
 
         # base_url 写死（不从环境变量读取），避免 /openai vs /openai/v1 导致 404
         # qwen_agent 对 OpenAI 兼容配置一般使用 model_type=openai + base_url
@@ -68,7 +68,7 @@ class PosterRefinerAgent:
             "model_type": "oai",
             "model": _TOOL_AGENT_MODEL,
             "api_key": raw_key,
-            "base_url": DEFAULT_CHAT_COMPLETIONS_URL_GEMINI,
+            "base_url": "http://127.0.0.1:51958/v1",
         }
         self._function_list = [
             "poster_text_score",
