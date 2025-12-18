@@ -21,6 +21,7 @@ from paper2slides.utils.agent_artifact_logging import (
     get_default_log_root,
 )
 from paper2slides.utils.api_utils import DEFAULT_CHAT_COMPLETIONS_URL, load_env_api_key
+from qwen_agent import settings as qwen_settings
 logger = get_logger(__name__)
 
 
@@ -146,7 +147,7 @@ class PosterRefinerAgent:
         est_tool_calls = int(max_rounds) * tool_calls_per_round + 5
         llm_budget = max(20, 2 * est_tool_calls)  # 2x safety factor
         os.environ["QWEN_AGENT_MAX_LLM_CALL_PER_RUN"] = str(llm_budget)
-        from qwen_agent import settings as qwen_settings
+        
         qwen_settings.MAX_LLM_CALL_PER_RUN = int(llm_budget)
 
         tool_assistant = Assistant(

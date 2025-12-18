@@ -10,11 +10,10 @@ from paper2slides.agents.tools.zimage_flowedit_tool import ZImageFlowEdit
 
 
 def resize_image_longest_side(image: Image.Image, size: int = 1024) -> Image.Image:
-    """Resize image so that the longest side is at most `size`."""
+    """Resize image so that the longest side is exactly `size`, scaling up if necessary."""
     width, height = image.size
-    if max(width, height) <= size:
-        return image
     
+    # Always resize to the target size based on the longest side
     scale = size / max(width, height)
     new_width = int(width * scale)
     new_height = int(height * scale)
