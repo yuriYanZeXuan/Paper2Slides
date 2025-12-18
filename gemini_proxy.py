@@ -16,7 +16,7 @@ import requests
 import uvicorn
 from typing import List, Dict, Any, Optional, Tuple, Union
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from dotenv import load_dotenv
 
 # Load env from parent directory if exists
@@ -311,6 +311,87 @@ class GeminiClient:
         return text_content, tool_calls if tool_calls else None
 
 
+def generate_stream_response(model: str, text_content: str, tool_calls: Optional[List[Dict]]):
+    """
+    Generate SSE (Server-Sent Events) stream response in OpenAI format.
+    
+    When stream=True, OpenAI returns multiple chunks with 'delta' instead of 'message'.
+    """
+    chat_id = f"chatcmpl-{int(time.time())}"
+    created = int(time.time())
+    
+    # First chunk: role
+    first_chunk = {
+        "id": chat_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": {"role": "assistant", "content": ""},
+            "finish_reason": None
+        }]
+    }
+    yield f"data: {json.dumps(first_chunk)}\n\n"
+    
+    # Content chunks - send content in one chunk (simulating streaming)
+    if text_content:
+        content_chunk = {
+            "id": chat_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {"content": text_content},
+                "finish_reason": None
+            }]
+        }
+        yield f"data: {json.dumps(content_chunk)}\n\n"
+    
+    # Tool calls chunks (if any)
+    if tool_calls:
+        for i, tc in enumerate(tool_calls):
+            tool_chunk = {
+                "id": chat_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{
+                            "index": i,
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["function"]["name"],
+                                "arguments": tc["function"]["arguments"]
+                            }
+                        }]
+                    },
+                    "finish_reason": None
+                }]
+            }
+            yield f"data: {json.dumps(tool_chunk)}\n\n"
+    
+    # Final chunk with finish_reason
+    finish_reason = "tool_calls" if tool_calls else "stop"
+    final_chunk = {
+        "id": chat_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": {},
+            "finish_reason": finish_reason
+        }]
+    }
+    yield f"data: {json.dumps(final_chunk)}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 @app.post("/v1/chat/completions")
 @app.post("/chat/completions")
 async def chat_completions(request: Request):
@@ -322,6 +403,7 @@ async def chat_completions(request: Request):
         messages = data.get("messages", [])
         temperature = data.get("temperature", 0.6)
         max_tokens = data.get("max_tokens", 7000)
+        stream = data.get("stream", False)  # Check if streaming is requested
         
         # Extract tools/functions for function calling
         tools = data.get("tools", [])
@@ -353,11 +435,12 @@ async def chat_completions(request: Request):
         )
         
         # Log for debugging
-        print(f"[GeminiProxy] Response - text: {text_content[:200] if text_content else '(empty)'}, tool_calls: {len(tool_calls) if tool_calls else 0}")
+        print(f"[GeminiProxy] Response - text: {text_content[:200] if text_content else '(empty)'}, tool_calls: {len(tool_calls) if tool_calls else 0}, stream: {stream}")
         try:
             with open("response.log", "a", encoding="utf-8") as f:
                 f.write(f"--- Request at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
                 f.write(f"Model: {model}\n")
+                f.write(f"Stream: {stream}\n")
                 f.write(f"Tools: {json.dumps([t.get('function', {}).get('name') for t in tools] if tools else [], ensure_ascii=False)}\n")
                 f.write(f"Messages count: {len(messages)}\n")
                 f.write(f"Response Content: {text_content}\n")
@@ -366,7 +449,14 @@ async def chat_completions(request: Request):
         except Exception as log_err:
             print(f"[GeminiProxy] Failed to log response: {log_err}")
         
-        # Construct standard OpenAI JSON response
+        # Return streaming response if requested
+        if stream:
+            return StreamingResponse(
+                generate_stream_response(model, text_content, tool_calls),
+                media_type="text/event-stream"
+            )
+        
+        # Non-streaming response (original behavior)
         message = {
             "role": "assistant",
             "content": text_content if text_content else None
