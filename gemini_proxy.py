@@ -164,7 +164,16 @@ async def chat_completions(request: Request):
             temperature=temperature,
             max_tokens=max_tokens
         )
-        
+        print(text_content)
+        try:
+            with open("response.log", "a", encoding="utf-8") as f:
+                f.write(f"--- Request at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+                f.write(f"Model: {model}\n")
+                f.write(f"Messages: {json.dumps(messages, ensure_ascii=False)}\n") # Optional: log input
+                f.write(f"Response Content: {text_content}\n")
+                f.write("-" * 50 + "\n\n")
+        except Exception as log_err:
+            print(f"[GeminiProxy] Failed to log response: {log_err}")
         # Construct standard OpenAI JSON response
         resp_data = {
             "id": f"chatcmpl-{int(time.time())}",
