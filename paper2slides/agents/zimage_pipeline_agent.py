@@ -214,7 +214,7 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
         # 这里仅设置清晰度阈值，保持调用接口简洁。
         refined = refiner.run(
             image=img,
-            clarity_threshold=9.5,
+            clarity_threshold=9.9,
             max_rounds=3,
             bbox_limit=5,
         )
