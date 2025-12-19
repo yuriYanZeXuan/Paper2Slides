@@ -46,6 +46,27 @@ def _load_plan_text_spans(plan_text_spans_path: str) -> List[Dict[str, Any]]:
     return data
 
 
+def _load_ocr_hint_from_ckpt(ckpt_path: str, target_bbox: BBox | None = None, target_id: int | None = None) -> str | None:
+    """从 grounding checkpoint 中查找 OCR 内容作为 hint。
+    
+    优先使用 target_id 查找；如果未提供，则尝试使用 bbox 匹配（IoU 或距离）。
+    """
+    with open(ckpt_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        
+    raw_blocks = data.get("raw_blocks", [])
+    if not raw_blocks:
+        return None
+        
+    # 方式 1: 通过 ID 查找
+    if target_id is not None:
+        for block in raw_blocks:
+            # 兼容旧格式（没有 id 字段）和新格式
+            if block.get("id") == target_id:
+                return block.get("content", "")
+        return None
+            
+
 def match_plan_text_for_patch(
     patch: Image.Image,
     bbox: BBox,
@@ -53,6 +74,7 @@ def match_plan_text_for_patch(
     *,
     max_candidates: int = 40,
     model: str | None = None,
+    hint_text: str | None = None,
     agent_name: str = "poster_refiner",
     log_root: str | None = None,
 ) -> tuple[str | None, Dict[str, Any] | None]:
@@ -90,8 +112,15 @@ def match_plan_text_for_patch(
         "Your task is to find which candidate text best corresponds to the text appearing inside the given image patch. "
         "You must respond with pure JSON only, no markdown, no code blocks, no extra text."
     )
+    
+    ocr_hint_str = ""
+    # 优先使用 hint_text (通常来自 ckpt)
+    if hint_text and len(hint_text.strip()) > 0:
+        ocr_hint_str = f"Hint: An upstream OCR model read the text in this region as: \"{hint_text}\". Use this as a reference if the image is blurry.\n"
+
     user_text = (
-        "Here is a small image patch from a poster. First, read the text inside the patch.\n"
+        f"Here is a small image patch from a poster. {ocr_hint_str}"
+        "First, read the text inside the patch.\n"
         "Then, from the candidate list below, choose the SINGLE candidate that best matches "
         "the text in this patch (based on semantic content, not style).\n\n"
         "Respond with ONLY the raw JSON object, do NOT wrap it in ```json``` or any markdown.\n"
@@ -202,6 +231,14 @@ class PosterTextMatch(BaseTool):
                 "type": "string",
                 "description": "Optional agent name for logging.",
             },
+            "grounding_ckpt_path": {
+                "type": "string",
+                "description": "Path to the grounding checkpoint JSON file (returned by poster_text_grounding).",
+            },
+            "region_id": {
+                "type": "integer",
+                "description": "The 'id' of the text region from grounding results. Used to lookup OCR content in checkpoint.",
+            },
             "log_root": {
                 "type": "string",
                 "description": "Optional log root path for logging.",
@@ -226,6 +263,18 @@ class PosterTextMatch(BaseTool):
 
         max_candidates = int(params.get("max_candidates", 40))
         model = params.get("model")
+        
+        # 优先从 checkpoint 获取 hint
+        hint_text = None
+        ckpt_path = params.get("grounding_ckpt_path")
+        region_id = params.get("region_id")
+        
+        if ckpt_path:
+            # 尝试从 checkpoint 加载
+            ckpt_hint = _load_ocr_hint_from_ckpt(ckpt_path, target_id=region_id)
+            if ckpt_hint and ckpt_hint.strip():
+                hint_text = ckpt_hint
+                
         agent_name = str(params.get("agent_name") or "poster_refiner")
         log_root = params.get("log_root")
 
@@ -235,6 +284,7 @@ class PosterTextMatch(BaseTool):
             plan_text_spans=plan_text_spans,
             max_candidates=max_candidates,
             model=model,
+            hint_text=hint_text,
             agent_name=agent_name,
             log_root=log_root,
         )

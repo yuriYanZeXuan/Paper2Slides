@@ -8,9 +8,10 @@ from paper2slides.utils.logging import get_logger
 from paper2slides.utils.agent_output_parsing import parse_agent_final_json
 # Ensure tools are imported so @register_tool side-effects run (tool registry is populated).
 from paper2slides.agents.tools import poster_text_score as _poster_text_score_tool  # noqa: F401
-# 使用 MinerU 版本的 text grounding（替换原 VLM 版本）
+# 使用 MinerU VLM 版本的 text grounding
 # from paper2slides.agents.tools import poster_text_grounding as _poster_text_grounding_tool  # noqa: F401
-from paper2slides.agents.tools import poster_minerU_grounding as _poster_text_grounding_tool  # noqa: F401
+# from paper2slides.agents.tools import poster_minerU_grounding as _poster_text_grounding_tool  # noqa: F401
+from paper2slides.agents.tools import image_content_grounding as _poster_text_grounding_tool  # noqa: F401
 from paper2slides.agents.tools import zimage_flowedit_tool as _zimage_flowedit_tool  # noqa: F401
 from paper2slides.agents.tools import poster_text_match as _poster_text_match_tool  # noqa: F401
 from paper2slides.agents.tools import poster_patch_flowedit as _poster_patch_flowedit_tool  # noqa: F401
@@ -90,6 +91,8 @@ class PosterRefinerAgent:
             "Operational Guide:\n"
             "Please perform the refinement process step-by-step. Start by checking the score. "
             "If the score indicates improvement is needed (below threshold), proceed to locate and refine text regions. "
+            "When using `poster_text_match`, please PASS the `grounding_ckpt_path` and `region_id` (from poster_text_grounding result) "
+            "so the tool can load the high-quality OCR content as a hint. This is better than passing raw text. "
             "Continue this process until the image meets the quality standard or the maximum rounds are reached.\n\n"
             "When the refinement is complete, please provide a summary in JSON format containing the final image path, score, and history."
         )

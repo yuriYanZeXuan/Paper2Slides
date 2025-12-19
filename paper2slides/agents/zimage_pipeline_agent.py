@@ -36,6 +36,9 @@ from paper2slides.utils.agent_logging import (
     log_agent_warning,
 )
 from paper2slides.utils.agent_artifact_logging import init_session, get_session_output_dir
+# Ensure tools are imported so @register_tool side-effects run (tool registry is populated)
+# Refiner agent uses poster_text_grounding internally
+import paper2slides.agents.tools.image_content_grounding  # noqa: F401
 from paper2slides.agents.poster_refiner import PosterRefinerAgent
 
 
