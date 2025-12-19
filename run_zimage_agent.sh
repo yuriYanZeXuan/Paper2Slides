@@ -2,8 +2,9 @@
 
 # 使用 Z-Image + Agent 生成 academic 风格的 poster，并使用本地权重
 # 权重路径与 run_poster.sh 中的 Z-Image 默认路径保持一致
-
-LOCAL_IMAGE_MODEL=${LOCAL_IMAGE_MODEL:-/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image}
+LOCAL_IMAGE_HEIGHT=768
+LOCAL_IMAGE_WIDTH=1024
+LOCAL_IMAGE_MODEL="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image"
 
 python -m paper2slides.agents.zimage_pipeline_agent \
   --input /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/postergenparserunit/examples/tusen_1210.md \
