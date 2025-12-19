@@ -9,6 +9,7 @@ from diffusers import ZImagePipeline
 from qwen_agent.tools.base import BaseTool, register_tool
 
 from paper2slides.agents.tools.zimage_flowedit_core import FlowEditZImage
+from paper2slides.utils.agent_artifact_logging import save_before_after_image, save_bbox_visualization
 from paper2slides.utils.agent_logging import log_agent_info, log_agent_success
 
 
@@ -133,6 +134,34 @@ class PosterPatchFlowEdit(BaseTool):
         out = image.copy()
         out.paste(edited, (x0, y0, x1, y1))
         out.save(output_image_path)
+
+        # ============ 保存可视化日志 ============
+        # 1. 保存 bbox 可视化：在原图上标注编辑区域
+        save_bbox_visualization(
+            agent_name="poster_patch_flowedit",
+            func_name="bbox_region",
+            image=image,
+            bboxes=[bbox],
+            suffix=f"x{x0}_y{y0}",
+        )
+
+        # 2. 保存 patch 级别的 before/after 对比（crop vs edited patch）
+        save_before_after_image(
+            agent_name="poster_patch_flowedit",
+            func_name="patch_edit",
+            before_img=image.crop((x0, y0, x1, y1)),
+            after_img=edited,
+            suffix=f"x{x0}_y{y0}",
+        )
+
+        # 3. 保存整图级别的 before/after 对比
+        save_before_after_image(
+            agent_name="poster_patch_flowedit",
+            func_name="full_image",
+            before_img=image,
+            after_img=out,
+            suffix=f"x{x0}_y{y0}",
+        )
 
         log_agent_success("poster_patch_flowedit", f"saved updated image to {output_image_path}")
         return json.dumps({"output_image_path": output_image_path}, ensure_ascii=False)
