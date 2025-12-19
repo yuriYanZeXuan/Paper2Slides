@@ -459,7 +459,7 @@ class ImageGenerator:
         pipe = self._get_zimage_pipeline()
         
         # 简单的尺寸设定：后续可以根据 prompt / config 调整比例
-        height = 1024
+        height = 768
         width = 1024
         
         generator = torch.Generator(device=self.local_device).manual_seed(42)

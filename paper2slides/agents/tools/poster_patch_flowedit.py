@@ -10,7 +10,7 @@ from qwen_agent.tools.base import BaseTool, register_tool
 
 from paper2slides.agents.tools.zimage_flowedit_core import FlowEditZImage
 from paper2slides.utils.agent_artifact_logging import save_before_after_image, save_bbox_visualization
-from paper2slides.utils.agent_logging import log_agent_info, log_agent_success
+from paper2slides.utils.agent_logging import log_agent_info, log_agent_success, log_agent_error
 
 
 BBox = Tuple[int, int, int, int]
@@ -54,7 +54,7 @@ class PosterPatchFlowEdit(BaseTool):
             "src_prompt": {"type": "string", "description": "Source prompt describing current image/region."},
             "tar_prompt": {"type": "string", "description": "Target prompt describing desired edit in this region."},
             "output_image_path": {"type": "string", "description": "Where to save the updated full image."},
-            "upscale_factor": {"type": "integer", "default": 2, "description": "Upscale factor for the bbox patch."},
+            "upscale_factor": {"type": "integer", "default": 4, "description": "Upscale factor for the bbox patch."},
             "num_inference_steps": {"type": "integer", "default": 20},
             "src_guidance_scale": {"type": "number", "default": 1.5},
             "tar_guidance_scale": {"type": "number", "default": 5.5},
@@ -63,7 +63,7 @@ class PosterPatchFlowEdit(BaseTool):
             "seed": {"type": "integer", "default": 42},
             "model_name": {
                 "type": "string",
-                f"default": os.getenv("LOCAL_IMAGE_MODEL") or "Tongyi-MAI/Z-Image-Turbo",
+                "default": "Tongyi-MAI/Z-Image-Turbo",
                 "description": "Z-Image model name to use.",
             },
             "device": {
@@ -76,7 +76,11 @@ class PosterPatchFlowEdit(BaseTool):
     }
 
     def call(self, params: Union[str, dict], **kwargs) -> str:
-        params = self._verify_json_format_args(params)
+        try:
+            params = self._verify_json_format_args(params)
+        except Exception as e:
+            log_agent_error("poster_patch_flowedit", f"invalid params: {e}")
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
         image_path: str = params["image_path"]
         bbox_raw = params["bbox"]
@@ -88,14 +92,14 @@ class PosterPatchFlowEdit(BaseTool):
         x0, y0, x1, y1 = map(int, bbox_raw)
         bbox: BBox = (x0, y0, x1, y1)
 
-        upscale_factor = int(params.get("upscale_factor", 2))
+        upscale_factor = int(params.get("upscale_factor", 4))
         num_inference_steps = int(params.get("num_inference_steps", 20))
         src_guidance_scale = float(params.get("src_guidance_scale", 1.5))
         tar_guidance_scale = float(params.get("tar_guidance_scale", 5.5))
         n_max = int(params.get("n_max", 18))
         n_min = int(params.get("n_min", 0))
         seed = int(params.get("seed", 42))
-        model_name = str(params.get("model_name", os.getenv("LOCAL_IMAGE_MODEL", "Tongyi-MAI/Z-Image-Turbo")))
+        model_name = "Tongyi-MAI/Z-Image-Turbo"
         device = str(params.get("device") or ("cuda" if torch.cuda.is_available() else "cpu"))
 
         os.makedirs(os.path.dirname(output_image_path) or ".", exist_ok=True)
@@ -111,9 +115,14 @@ class PosterPatchFlowEdit(BaseTool):
 
         crop = image.crop((x0, y0, x1, y1))
         if upscale_factor > 1:
-            crop = crop.resize(((x1 - x0) * upscale_factor, (y1 - y0) * upscale_factor), Image.LANCZOS)
+            crop = crop.resize(
+                (
+                    min((x1 - x0) * upscale_factor,1024), 
+                    min((y1 - y0) * upscale_factor,1024)
+                ),
+             Image.LANCZOS)
 
-        pipe = _get_zimage_pipe(model_name=model_name, device=device)
+        pipe = _get_zimage_pipe(model_name=os.getenv("LOCAL_IMAGE_MODEL", "Tongyi-MAI/Z-Image-Turbo"), device=device)
 
         edited = FlowEditZImage(
             pipe=pipe,
