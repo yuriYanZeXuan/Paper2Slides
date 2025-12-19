@@ -8,6 +8,7 @@ from PIL import Image
 
 from qwen_agent.tools.base import BaseTool, register_tool
 from paper2slides.utils.agent_logging import log_agent_info, log_agent_warning
+from paper2slides.utils.agent_output_parsing import extract_json_from_response
 from paper2slides.utils.api_utils import get_openai_client
 
 
@@ -63,10 +64,9 @@ def score_poster_text_clarity_with_vlm(image: Image.Image) -> float:
         model=DEFAULT_TEXT_VLM_MODEL,
         messages=messages,
         temperature=0.0,
-        response_format={"type": "json_object"},
     )
     content = response.choices[0].message.content
-    data = json.loads(content)
+    data = extract_json_from_response(content)
     score = float(data.get("score", 5.0))
     # clamp to [0, 10]
     score = max(0.0, min(10.0, score))

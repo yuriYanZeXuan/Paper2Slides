@@ -51,3 +51,29 @@ def parse_agent_final_json(raw: str) -> Dict[str, Any]:
     return obj
 
 
+def extract_json_from_response(content: str) -> Dict[str, Any]:
+    """从 VLM 响应中提取 JSON 对象，处理 markdown 代码块和额外文本。
+    
+    Args:
+        content: 模型响应的原始文本
+        
+    Returns:
+        解析后的 dict，如果解析失败返回空字典
+    """
+    if not content or not content.strip():
+        return {}
+    
+    # 复用现有的提取逻辑
+    candidate = extract_json_fragment(content)
+    if not candidate:
+        return {}
+    
+    try:
+        result = json.loads(candidate)
+        if isinstance(result, dict):
+            return result
+        return {}
+    except json.JSONDecodeError:
+        return {}
+
+

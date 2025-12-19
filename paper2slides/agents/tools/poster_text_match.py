@@ -10,6 +10,7 @@ from PIL import Image
 from qwen_agent.tools.base import BaseTool, register_tool
 from paper2slides.utils.api_utils import get_openai_client
 from paper2slides.utils.agent_artifact_logging import save_json_log
+from paper2slides.utils.agent_output_parsing import extract_json_from_response
 
 
 BBox = Tuple[int, int, int, int]
@@ -119,10 +120,11 @@ def match_plan_text_for_patch(
         model=model,
         messages=messages,
         temperature=0.0,
-        response_format={"type": "json_object"},
     )
     content = response.choices[0].message.content
-    data = json.loads(content)
+    
+    # 从响应中提取 JSON（处理模型可能输出额外文本的情况）
+    data = extract_json_from_response(content)
 
     raw_idx = data.get("matched_index")
     raw_text = data.get("matched_text")

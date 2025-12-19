@@ -9,6 +9,7 @@ from PIL import Image
 from qwen_agent.tools.base import BaseTool, register_tool
 from paper2slides.utils.agent_logging import log_agent_info, log_agent_warning
 from paper2slides.utils.agent_artifact_logging import save_bbox_visualization, save_json_log
+from paper2slides.utils.agent_output_parsing import extract_json_from_response
 from paper2slides.utils.api_utils import get_openai_client
 
 
@@ -116,10 +117,9 @@ def ground_poster_text_regions_with_vlm(image: Image.Image) -> List[BBox]:
         model=DEFAULT_GROUNDING_VLM_MODEL,
         messages=messages,
         temperature=0.0,
-        response_format={"type": "json_object"},
     )
     content = client_response.choices[0].message.content
-    data = json.loads(content)
+    data = extract_json_from_response(content)
     
     # 解析新格式的响应
     thinking = data.get("thinking", "")

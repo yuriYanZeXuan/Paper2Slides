@@ -62,7 +62,7 @@ class PosterPatchFlowEdit(BaseTool):
             "seed": {"type": "integer", "default": 42},
             "model_name": {
                 "type": "string",
-                "default": "Tongyi-MAI/Z-Image-Turbo",
+                f"default": os.getenv("LOCAL_IMAGE_MODEL") or "Tongyi-MAI/Z-Image-Turbo",
                 "description": "Z-Image model name to use.",
             },
             "device": {
@@ -94,7 +94,7 @@ class PosterPatchFlowEdit(BaseTool):
         n_max = int(params.get("n_max", 18))
         n_min = int(params.get("n_min", 0))
         seed = int(params.get("seed", 42))
-        model_name = str(params.get("model_name") or os.getenv("LOCAL_IMAGE_MODEL") or "Tongyi-MAI/Z-Image-Turbo")
+        model_name = str(params.get("model_name", os.getenv("LOCAL_IMAGE_MODEL", "Tongyi-MAI/Z-Image-Turbo")))
         device = str(params.get("device") or ("cuda" if torch.cuda.is_available() else "cpu"))
 
         os.makedirs(os.path.dirname(output_image_path) or ".", exist_ok=True)

@@ -106,16 +106,6 @@ class PosterRefinerAgent:
             "Preserve the current layout, colors, fonts and overall visual style of the original image."
         )
 
-    def _build_tar_prompt(self, matched_text: str) -> str:
-        """基于匹配到的文字内容构造局部 tar_prompt。"""
-        style = (self.style_name or "academic").strip()
-        snippet = (matched_text or "").strip()
-        assert snippet and len(snippet) < 200, "matched_text is empty or too long (>200 chars)"
-        return (
-            f"Same {style} academic poster style and layout as the original image, "
-            f"but ensure that the text '{snippet}' in this region is sharp, high-contrast, and highly legible, "
-            "without changing the overall composition, fonts, or colors outside this region."
-        )
 
     # ============ VLM tools (via qwen_agent tool dispatch) ============
     def _save_tmp_image_for_tool(self, image: Image.Image, tag: str) -> str:
