@@ -3,7 +3,6 @@ import os
 from typing import Tuple, Union
 
 from PIL import Image
-from Paper2Slides.paper2slides.utils import save_json_log
 import torch
 from diffusers import ZImagePipeline
 
@@ -11,7 +10,7 @@ from qwen_agent.tools.base import BaseTool, register_tool
 
 from paper2slides.agents.tools.config_loader import get_flowedit_config
 from paper2slides.agents.tools.zimage_flowedit_core import FlowEditZImage
-from paper2slides.utils.agent_artifact_logging import save_before_after_image, save_bbox_visualization
+from paper2slides.utils.agent_artifact_logging import save_before_after_image, save_bbox_visualization, save_json_log
 from paper2slides.utils.agent_logging import log_agent_info, log_agent_success, log_agent_error
 
 
