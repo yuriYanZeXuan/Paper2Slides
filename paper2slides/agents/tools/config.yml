@@ -1,0 +1,40 @@
+# Paper2Slides Agent Tools Configuration
+# 该配置文件包含 agent 工具的固定参数，这些参数通常不会随环境变化
+
+# FlowEdit 相关配置
+flowedit:
+  # 最长边的最大分辨率（保持长宽比缩放）
+  max_resolution: 1024
+  
+  # 推理步数
+  num_inference_steps: 20
+  
+  # 源图像引导强度
+  src_guidance_scale: 1.5
+  
+  # 目标图像引导强度
+  tar_guidance_scale: 5.5
+  
+  # FlowEdit n_max 参数
+  n_max: 18
+  
+  # FlowEdit n_min 参数
+  n_min: 0
+  
+  # 随机种子
+  seed: 42
+  
+  # 默认模型名称
+  model_name: "Tongyi-MAI/Z-Image-Turbo"
+  
+  # 默认设备（留空则自动检测 cuda/cpu）
+  device: ""
+
+# 文字匹配工具配置
+text_match:
+  # 最大候选数量
+  max_candidates: 40
+  
+  # 匹配模型（留空则使用环境变量 POSTER_TEXT_MATCH_MODEL 或默认 gemini-3-pro）
+  model: ""
+

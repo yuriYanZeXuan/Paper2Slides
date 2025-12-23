@@ -8,6 +8,7 @@ from diffusers import ZImagePipeline
 
 from qwen_agent.tools.base import BaseTool, register_tool
 
+from paper2slides.agents.tools.config_loader import get_flowedit_config
 from paper2slides.agents.tools.zimage_flowedit_core import FlowEditZImage
 from paper2slides.utils.agent_logging import log_agent_info, log_agent_success
 
@@ -60,16 +61,6 @@ class ZImageFlowEdit(BaseTool):
                 'type': 'string',
                 'description': 'Where to save the edited image.'
             },
-            'model_name': {
-                'type': 'string',
-                'description': 'Z-Image model name to use.',
-                'default': 'Tongyi-MAI/Z-Image-Turbo',
-            },
-            'device': {
-                'type': 'string',
-                'description': 'Device to run on, e.g., "cuda" or "cpu". Default auto.',
-                'default': '',
-            },
         },
         'required': ['src_image_path', 'src_prompt', 'tar_prompt', 'output_path'],
     }
@@ -81,8 +72,18 @@ class ZImageFlowEdit(BaseTool):
         src_prompt: str = params['src_prompt']
         tar_prompt: str = params['tar_prompt']
         output_path: str = params['output_path']
-        model_name: str = params.get('model_name', 'Tongyi-MAI/Z-Image-Turbo')
-        device: str = params.get('device') or ('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # 从配置文件读取固定参数
+        cfg = get_flowedit_config()
+        num_inference_steps = int(cfg.get("num_inference_steps", 20))
+        src_guidance_scale = float(cfg.get("src_guidance_scale", 1.5))
+        tar_guidance_scale = float(cfg.get("tar_guidance_scale", 5.5))
+        # 整图编辑的 n_max/n_min 使用不同默认值
+        n_max = int(cfg.get("n_max", 20))
+        n_min = int(cfg.get("n_min", 10))
+        seed = int(cfg.get("seed", 42))
+        model_name = cfg.get("model_name") or 'Tongyi-MAI/Z-Image-Turbo'
+        device = cfg.get("device") or ('cuda' if torch.cuda.is_available() else 'cpu')
 
         os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
 
@@ -99,12 +100,12 @@ class ZImageFlowEdit(BaseTool):
             x_src_image=image,
             src_prompt=src_prompt,
             tar_prompt=tar_prompt,
-            num_inference_steps=20,
-            src_guidance_scale=1.5,
-            tar_guidance_scale=5.5,
-            n_max=20,
-            n_min=10,
-            seed=42,
+            num_inference_steps=num_inference_steps,
+            src_guidance_scale=src_guidance_scale,
+            tar_guidance_scale=tar_guidance_scale,
+            n_max=n_max,
+            n_min=n_min,
+            seed=seed,
         )
         edited.save(output_path)
 

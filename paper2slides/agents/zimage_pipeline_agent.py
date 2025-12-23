@@ -39,10 +39,14 @@ from paper2slides.utils.agent_artifact_logging import init_session, get_session_
 # Ensure tools are imported so @register_tool side-effects run (tool registry is populated)
 # Refiner agent uses poster_text_grounding internally
 import paper2slides.agents.tools.image_content_grounding  # noqa: F401
+from paper2slides.agents.tools.config_loader import set_config_path
 from paper2slides.agents.poster_refiner import PosterRefinerAgent
 
 
 logger = logging.getLogger(__name__)
+
+# 默认配置文件路径（相对于 agents 目录）
+_DEFAULT_CONFIG_REL = "tools/config.yml"
 
 
 def _split_content_to_spans(text: str) -> List[str]:
@@ -123,6 +127,14 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
     session_dir = init_session()
     log_agent_start(agent)
     log_agent_info(agent, f"logging session: {session_dir}")
+    
+    # 加载配置文件
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        # 相对路径相对于 agents 目录
+        config_path = Path(__file__).parent / config_path
+    log_agent_info(agent, f"loading config from: {config_path}")
+    set_config_path(config_path)
 
     # 1. 解析/归一化输入
     input_path = normalize_input_path(args.input)
@@ -249,6 +261,8 @@ def main() -> None:
                         help="Local Z-Image model path or repo id")
     parser.add_argument("--device", default="cuda",
                         help="Device for local Z-Image (cuda/cpu)")
+    parser.add_argument("--config", default=_DEFAULT_CONFIG_REL,
+                        help="Path to agent config file (relative to agents/ or absolute)")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()

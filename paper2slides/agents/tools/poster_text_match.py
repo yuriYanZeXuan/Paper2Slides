@@ -8,15 +8,30 @@ from typing import Any, Dict, List, Tuple
 from PIL import Image
 
 from qwen_agent.tools.base import BaseTool, register_tool
+from paper2slides.agents.tools.config_loader import get_text_match_config
 from paper2slides.utils.api_utils import get_openai_client
 from paper2slides.utils.agent_artifact_logging import save_json_log
 from paper2slides.utils.agent_output_parsing import extract_json_from_response
 
 
 BBox = Tuple[int, int, int, int]
-_DEFAULT_TEXT_MATCH_MODEL = os.getenv("POSTER_TEXT_MATCH_MODEL", "gemini-3-pro")
 
 _PLAN_SPANS_CACHE: dict[str, tuple[float, List[Dict[str, Any]]]] = {}
+
+
+def _get_default_model() -> str:
+    """获取默认匹配模型。"""
+    cfg = get_text_match_config()
+    model = cfg.get("model", "").strip()
+    if model:
+        return model
+    return os.getenv("POSTER_TEXT_MATCH_MODEL", "gemini-3-pro")
+
+
+def _get_default_max_candidates() -> int:
+    """获取默认最大候选数量。"""
+    cfg = get_text_match_config()
+    return int(cfg.get("max_candidates", 40))
 
 
 def _encode_image_to_base64(image: Image.Image) -> str:
@@ -72,7 +87,7 @@ def match_plan_text_for_patch(
     bbox: BBox,
     plan_text_spans: List[Dict[str, Any]],
     *,
-    max_candidates: int = 40,
+    max_candidates: int | None = None,
     model: str | None = None,
     hint_text: str | None = None,
     agent_name: str = "poster_refiner",
@@ -90,7 +105,13 @@ def match_plan_text_for_patch(
     if not plan_text_spans:
         return None, None
 
-    model = (model or _DEFAULT_TEXT_MATCH_MODEL).strip()
+    # 使用配置中的默认值
+    if max_candidates is None:
+        max_candidates = _get_default_max_candidates()
+    if model is None:
+        model = _get_default_model()
+    
+    model = model.strip()
     assert model, "model must be non-empty"
 
     client = get_openai_client(key_type="text")
@@ -218,19 +239,6 @@ class PosterTextMatch(BaseTool):
                 "type": "string",
                 "description": "Path to a JSON file containing plan_text_spans list.",
             },
-            "max_candidates": {
-                "type": "integer",
-                "description": "Max number of candidates to include in prompt.",
-                "default": 40,
-            },
-            "model": {
-                "type": "string",
-                "description": "Optional override model for matching.",
-            },
-            "agent_name": {
-                "type": "string",
-                "description": "Optional agent name for logging.",
-            },
             "grounding_ckpt_path": {
                 "type": "string",
                 "description": "Path to the grounding checkpoint JSON file (returned by poster_text_grounding).",
@@ -260,9 +268,6 @@ class PosterTextMatch(BaseTool):
         full_img = Image.open(image_path).convert("RGB")
         patch = full_img.crop(bbox_t)
         plan_text_spans = _load_plan_text_spans(plan_text_spans_path)
-
-        max_candidates = int(params.get("max_candidates", 40))
-        model = params.get("model")
         
         # 优先从 checkpoint 获取 hint
         hint_text = None
@@ -282,8 +287,6 @@ class PosterTextMatch(BaseTool):
             patch=patch,
             bbox=bbox_t,
             plan_text_spans=plan_text_spans,
-            max_candidates=max_candidates,
-            model=model,
             hint_text=hint_text,
             agent_name=agent_name,
             log_root=log_root,

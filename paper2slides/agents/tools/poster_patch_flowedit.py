@@ -8,6 +8,7 @@ from diffusers import ZImagePipeline
 
 from qwen_agent.tools.base import BaseTool, register_tool
 
+from paper2slides.agents.tools.config_loader import get_flowedit_config
 from paper2slides.agents.tools.zimage_flowedit_core import FlowEditZImage
 from paper2slides.utils.agent_artifact_logging import save_before_after_image, save_bbox_visualization
 from paper2slides.utils.agent_logging import log_agent_info, log_agent_success, log_agent_error
@@ -54,23 +55,6 @@ class PosterPatchFlowEdit(BaseTool):
             "src_prompt": {"type": "string", "description": "Source prompt describing current image/region."},
             "tar_prompt": {"type": "string", "description": "Target prompt describing desired edit in this region."},
             "output_image_path": {"type": "string", "description": "Where to save the updated full image."},
-            "upscale_factor": {"type": "integer", "default": 4, "description": "Upscale factor for the bbox patch."},
-            "num_inference_steps": {"type": "integer", "default": 20},
-            "src_guidance_scale": {"type": "number", "default": 1.5},
-            "tar_guidance_scale": {"type": "number", "default": 5.5},
-            "n_max": {"type": "integer", "default": 18},
-            "n_min": {"type": "integer", "default": 0},
-            "seed": {"type": "integer", "default": 42},
-            "model_name": {
-                "type": "string",
-                "default": "Tongyi-MAI/Z-Image-Turbo",
-                "description": "Z-Image model name to use.",
-            },
-            "device": {
-                "type": "string",
-                "default": "",
-                "description": "Device to run on, e.g. cuda/cpu. Default auto.",
-            },
         },
         "required": ["image_path", "bbox", "src_prompt", "tar_prompt", "output_image_path"],
     }
@@ -92,21 +76,23 @@ class PosterPatchFlowEdit(BaseTool):
         x0, y0, x1, y1 = map(int, bbox_raw)
         bbox: BBox = (x0, y0, x1, y1)
 
-        upscale_factor = int(params.get("upscale_factor", 4))
-        num_inference_steps = int(params.get("num_inference_steps", 20))
-        src_guidance_scale = float(params.get("src_guidance_scale", 1.5))
-        tar_guidance_scale = float(params.get("tar_guidance_scale", 5.5))
-        n_max = int(params.get("n_max", 18))
-        n_min = int(params.get("n_min", 0))
-        seed = int(params.get("seed", 42))
-        model_name = "Tongyi-MAI/Z-Image-Turbo"
-        device = str(params.get("device") or ("cuda" if torch.cuda.is_available() else "cpu"))
+        # 从配置文件读取固定参数
+        cfg = get_flowedit_config()
+        max_resolution = int(cfg.get("max_resolution", 1024))
+        num_inference_steps = int(cfg.get("num_inference_steps", 20))
+        src_guidance_scale = float(cfg.get("src_guidance_scale", 1.5))
+        tar_guidance_scale = float(cfg.get("tar_guidance_scale", 5.5))
+        n_max = int(cfg.get("n_max", 18))
+        n_min = int(cfg.get("n_min", 0))
+        seed = int(cfg.get("seed", 42))
+        model_name = cfg.get("model_name") or "Tongyi-MAI/Z-Image-Turbo"
+        device = cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu")
 
         os.makedirs(os.path.dirname(output_image_path) or ".", exist_ok=True)
 
         log_agent_info(
             "poster_patch_flowedit",
-            f"start | img={image_path} bbox={bbox} -> out={output_image_path}, model={model_name}, device={device}",
+            f"start | img={image_path} bbox={bbox} -> out={output_image_path}, model={model_name}, device={device}, max_res={max_resolution}",
         )
 
         image = Image.open(image_path).convert("RGB")
@@ -114,15 +100,16 @@ class PosterPatchFlowEdit(BaseTool):
         assert 0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h, f"bbox out of bounds: {bbox}, image_size=({w},{h})"
 
         crop = image.crop((x0, y0, x1, y1))
-        if upscale_factor > 1:
-            crop = crop.resize(
-                (
-                    min((x1 - x0) * upscale_factor,1024), 
-                    min((y1 - y0) * upscale_factor,1024)
-                ),
-             Image.LANCZOS)
+        crop_w, crop_h = crop.size
+        
+        # 按最长边缩放到 max_resolution，保持长宽比
+        if max(crop_w, crop_h) < max_resolution:
+            scale = max_resolution / max(crop_w, crop_h)
+            new_w = int(crop_w * scale)
+            new_h = int(crop_h * scale)
+            crop = crop.resize((new_w, new_h), Image.LANCZOS)
 
-        pipe = _get_zimage_pipe(model_name=os.getenv("LOCAL_IMAGE_MODEL", "Tongyi-MAI/Z-Image-Turbo"), device=device)
+        pipe = _get_zimage_pipe(model_name=os.getenv("LOCAL_IMAGE_MODEL", model_name), device=device)
 
         edited = FlowEditZImage(
             pipe=pipe,
@@ -174,4 +161,3 @@ class PosterPatchFlowEdit(BaseTool):
 
         log_agent_success("poster_patch_flowedit", f"saved updated image to {output_image_path}")
         return json.dumps({"output_image_path": output_image_path}, ensure_ascii=False)
-
