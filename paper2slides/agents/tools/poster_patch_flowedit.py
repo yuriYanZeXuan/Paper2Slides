@@ -3,6 +3,7 @@ import os
 from typing import Tuple, Union
 
 from PIL import Image
+from Paper2Slides.paper2slides.utils import save_json_log
 import torch
 from diffusers import ZImagePipeline
 
@@ -158,6 +159,21 @@ class PosterPatchFlowEdit(BaseTool):
             after_img=out,
             suffix=f"x{x0}_y{y0}",
         )
-
+        save_json_log(
+            agent_name="poster_patch_flowedit",
+            func_name="full_image",
+            payload={
+                "x0": x0,
+                "y0": y0,
+                "x1": x1,
+                "y1": y1,
+                "src_prompt": src_prompt,
+                "tar_prompt": tar_prompt,
+                "crop_size": (crop_w, crop_h),
+                "edited_size": edited.size,
+                "output_image_path": output_image_path,
+            },
+            suffix=f"{src_prompt[:10]}_{tar_prompt[:10]}",
+        )
         log_agent_success("poster_patch_flowedit", f"saved updated image to {output_image_path}")
         return json.dumps({"output_image_path": output_image_path}, ensure_ascii=False)
