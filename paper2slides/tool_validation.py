@@ -27,10 +27,14 @@ def main(
     bbox: Optional[List[int]] = None,
     output_path: str = "output.png",
     resize: bool = True,
-    model_path: str = "Tongyi-MAI/Z-Image-Turbo"
+    model_path: str = "Tongyi-MAI/Z-Image-Turbo",
+    in_context: bool = False,
 ):
     """
     Main function to edit an image using ZImageFlowEdit tool.
+    
+    Args:
+        in_context: Enable In-Context-Aware mode for better similarity preservation.
     """
     # 1. Input Validation
     if not os.path.exists(image_path):
@@ -43,6 +47,7 @@ def main(
     print(f"Processing Image: {image_path}")
     print(f"Output Path: {output_path}")
     print(f"Using Model Path: {model_path}")
+    print(f"In-Context Mode: {in_context}")
 
     # 2. Load and Preprocess
     original_img = Image.open(image_path).convert("RGB")
@@ -77,7 +82,8 @@ def main(
         "src_prompt": src_prompt,
         "tar_prompt": tar_prompt,
         "output_path": intermediate_output_path,
-        "model_name": model_path
+        "model_name": model_path,
+        "in_context": in_context,
     }
     
     print("Invoking ZImageFlowEdit tool...")
@@ -125,6 +131,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_path", type=str, default="output.png", help="Output path")
     parser.add_argument("--no_resize", action="store_true", help="Disable resizing to 1024 longest side")
     parser.add_argument("--model_path", type=str, default="Tongyi-MAI/Z-Image-Turbo", help="Path or name of Z-Image model")
+    parser.add_argument("--in_context", action="store_true", help="Enable In-Context-Aware mode for better similarity preservation with original image")
     
     args = parser.parse_args()
     
@@ -139,5 +146,6 @@ if __name__ == "__main__":
         bbox=bbox_list,
         output_path=args.output_path,
         resize=not args.no_resize,
-        model_path=args.model_path
+        model_path=args.model_path,
+        in_context=args.in_context,
     )

@@ -61,6 +61,11 @@ class ZImageFlowEdit(BaseTool):
                 'type': 'string',
                 'description': 'Where to save the edited image.'
             },
+            'in_context': {
+                'type': 'boolean',
+                'description': 'Enable In-Context-Aware mode: concatenate reference image during denoising to preserve similarity with original image. Default is False.',
+                'default': False,
+            },
         },
         'required': ['src_image_path', 'src_prompt', 'tar_prompt', 'output_path'],
     }
@@ -72,6 +77,7 @@ class ZImageFlowEdit(BaseTool):
         src_prompt: str = params['src_prompt']
         tar_prompt: str = params['tar_prompt']
         output_path: str = params['output_path']
+        in_context: bool = params.get('in_context', False)
         
         # 从配置文件读取固定参数
         cfg = get_flowedit_config()
@@ -89,7 +95,7 @@ class ZImageFlowEdit(BaseTool):
 
         log_agent_info(
             "zimage_flowedit_tool",
-            f"start | src={src_image_path} -> out={output_path}, model={model_name}, device={device}",
+            f"start | src={src_image_path} -> out={output_path}, model={model_name}, device={device}, in_context={in_context}",
         )
 
         image = Image.open(src_image_path).convert('RGB')
@@ -106,6 +112,7 @@ class ZImageFlowEdit(BaseTool):
             n_max=n_max,
             n_min=n_min,
             seed=seed,
+            in_context=in_context,
         )
         edited.save(output_path)
 
