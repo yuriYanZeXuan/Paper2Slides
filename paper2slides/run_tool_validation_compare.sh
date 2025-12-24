@@ -7,9 +7,9 @@ export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 # Configuration
 IMAGE_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Paper2Slides/outputs/agent_logs/run_058/outputs/poster.png"
-SRC_PROMPT="Black text 'Complhomd&Molivation'"
-TAR_PROMPT="Black text 'Background & Motivation'"
-BBOX="100,350,321,390"
+SRC_PROMPT="text 'Comprehensive Analysis of Edema'"
+TAR_PROMPT="text 'Comprehensive Analysis of Edema'"
+BBOX="86, 85, 1536, 182"
 
 # 从环境变量获取 LOCAL_IMAGE_MODEL，如果未设置则使用默认路径
 LOCAL_IMAGE_MODEL=${LOCAL_IMAGE_MODEL:-/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image}
