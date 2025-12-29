@@ -18,8 +18,15 @@ from pptx.util import Inches, Pt, Emu
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.dml.color import RGBColor
-from pptx.oxml.ns import nsmap
+# XML namespace handling for shape effects
 from lxml import etree
+
+# Define namespaces for XML manipulation
+NSMAP = {
+    'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+    'p': 'http://schemas.openxmlformats.org/presentationml/2006/main',
+    'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+}
 
 
 class PPTGenerator:
@@ -167,17 +174,17 @@ class PPTGenerator:
         # adjust corner radius via XML manipulation
         # python-pptx doesn't have direct API for this
         sp = shape._element
-        prstGeom = sp.find('.//a:prstGeom', nsmap)
+        prstGeom = sp.find('.//a:prstGeom', NSMAP)
         if prstGeom is not None:
-            avLst = prstGeom.find('a:avLst', nsmap)
+            avLst = prstGeom.find('a:avLst', NSMAP)
             if avLst is None:
-                avLst = etree.SubElement(prstGeom, '{%s}avLst' % nsmap['a'])
+                avLst = etree.SubElement(prstGeom, '{%s}avLst' % NSMAP['a'])
             # clear existing adjustments
             for child in list(avLst):
                 avLst.remove(child)
             # add corner radius adjustment (value is in 1/100000 of shape size)
             radius_val = int(corner_radius * 100000 / min(w, h))
-            gd = etree.SubElement(avLst, '{%s}gd' % nsmap['a'])
+            gd = etree.SubElement(avLst, '{%s}gd' % NSMAP['a'])
             gd.set('name', 'adj')
             gd.set('fmla', f'val {radius_val}')
         
@@ -245,17 +252,17 @@ class PPTGenerator:
                             alpha: int = 40):
         """Add outer shadow effect to shape via XML"""
         sp = shape._element
-        spPr = sp.find('.//p:spPr', nsmap)
+        spPr = sp.find('.//p:spPr', NSMAP)
         if spPr is None:
             return
         
         # create effectLst if not exists
-        effectLst = spPr.find('a:effectLst', nsmap)
+        effectLst = spPr.find('a:effectLst', NSMAP)
         if effectLst is None:
-            effectLst = etree.SubElement(spPr, '{%s}effectLst' % nsmap['a'])
+            effectLst = etree.SubElement(spPr, '{%s}effectLst' % NSMAP['a'])
         
         # add outer shadow
-        outerShdw = etree.SubElement(effectLst, '{%s}outerShdw' % nsmap['a'])
+        outerShdw = etree.SubElement(effectLst, '{%s}outerShdw' % NSMAP['a'])
         outerShdw.set('blurRad', str(blur_radius))
         outerShdw.set('dist', str(distance))
         outerShdw.set('dir', str(direction))
@@ -263,9 +270,9 @@ class PPTGenerator:
         outerShdw.set('rotWithShape', '0')
         
         # shadow color with alpha
-        srgbClr = etree.SubElement(outerShdw, '{%s}srgbClr' % nsmap['a'])
+        srgbClr = etree.SubElement(outerShdw, '{%s}srgbClr' % NSMAP['a'])
         srgbClr.set('val', color.lstrip('#'))
-        alphaElem = etree.SubElement(srgbClr, '{%s}alpha' % nsmap['a'])
+        alphaElem = etree.SubElement(srgbClr, '{%s}alpha' % NSMAP['a'])
         alphaElem.set('val', f'{alpha * 1000}')  # percentage * 1000
     
     def add_image(self, slide, image_path: str, x: float, y: float,
