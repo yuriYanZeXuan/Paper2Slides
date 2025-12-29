@@ -7,11 +7,17 @@ export LOCAL_IMAGE_WIDTH=2048
 
 LOCAL_IMAGE_MODEL="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image"
 
+# Refiner 模式:
+#   - pptx: (默认) 新流程 - 擦除模糊文字 + PPTX 渲染清晰文字，输出 PPTX/PDF
+#   - legacy: 旧流程 - iterative FlowEdit
+REFINER_MODE="pptx"
+
 python -m paper2slides.agents.zimage_pipeline_agent \
   --input /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/postergenparserunit/examples/tusen_1210.md \
   --output poster \
   --style academic \
   --local-image-model "${LOCAL_IMAGE_MODEL}" \
+  --refiner-mode "${REFINER_MODE}" \
   --fast \
-  --device cuda \
+  --device cuda
 

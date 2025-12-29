@@ -39,8 +39,11 @@ from paper2slides.utils.agent_artifact_logging import init_session, get_session_
 # Ensure tools are imported so @register_tool side-effects run (tool registry is populated)
 # Refiner agent uses poster_text_grounding internally
 import paper2slides.agents.tools.image_content_grounding  # noqa: F401
+import paper2slides.agents.tools.pptx_renderer  # noqa: F401
+import paper2slides.agents.tools.text_erase_flowedit  # noqa: F401
 from paper2slides.agents.tools.config_loader import set_config_path
 from paper2slides.agents.poster_refiner import PosterRefinerAgent
+from paper2slides.agents.poster_pptx_refiner import PosterPPTXRefiner
 
 
 logger = logging.getLogger(__name__)
@@ -207,35 +210,81 @@ def run_zimage_agent_pipeline(args: argparse.Namespace) -> None:
         log_agent_warning(agent, f"no images found under {output_dir}, skip refinement")
         return
 
-    # 5. 构造 PosterRefinerAgent，并依次对图片做强化
+    # 5. 构造 Refiner，并依次对图片做强化
     # Z-Image 权重路径：优先使用 CLI/local env，其次退回到与 run_poster.sh 一致的默认路径
     zimage_model = (
         args.local_image_model
         or "Tongyi-MAI/Z-Image-Turbo"
     )
-    refiner = PosterRefinerAgent(
-        zimage_model_name=zimage_model,
-        device=args.device,
-        style_name=style_type,
-        plan_text_spans=[],  # 方案 B：不直接传大列表给 agent，交由 tool 通过路径加载
-        plan_text_spans_path=plan_text_spans_path,
-    )
-
-    for img_path in image_paths:
-        log_agent_info(agent, f"refine image={img_path.name}")
-        img = Image.open(img_path).convert("RGB")
-
-        # 让 PosterRefinerAgent 内部基于 style 和 plan_text_spans 构造 src/tar prompt，
-        # 这里仅设置清晰度阈值，保持调用接口简洁。
-        refined = refiner.run(
-            image=img,
-            clarity_threshold=9.9,
-            max_rounds=3,
-            bbox_limit=5,
+    
+    # 根据 refiner_mode 选择使用哪种 refiner
+    refiner_mode = getattr(args, 'refiner_mode', 'pptx') or 'pptx'  # 默认使用新的 PPTX refiner
+    # 处理命令行参数中的连字符
+    if hasattr(args, 'refiner_mode'):
+        refiner_mode = args.refiner_mode
+    log_agent_info(agent, f"using refiner mode: {refiner_mode}")
+    
+    if refiner_mode == 'pptx':
+        # 新流程：擦除 + PPTX 渲染
+        pptx_refiner = PosterPPTXRefiner(
+            zimage_model_name=zimage_model,
+            device=args.device,
+            style_name=style_type,
+            plan_text_spans_path=plan_text_spans_path,
+        )
+        
+        for img_path in image_paths:
+            log_agent_info(agent, f"refine image (PPTX mode): {img_path.name}")
+            img = Image.open(img_path).convert("RGB")
+            
+            # 输出目录使用图片所在目录
+            refine_output_dir = img_path.parent / f"{img_path.stem}_refined"
+            
+            result = pptx_refiner.run(
+                image=img,
+                output_dir=str(refine_output_dir),
+                poster_name=img_path.stem,
+            )
+            
+            # 如果生成了最终图像，复制到原位置作为替换
+            final_image_path = result.get("final_image_path")
+            if final_image_path and Path(final_image_path).exists():
+                final_img = Image.open(final_image_path)
+                final_img.save(img_path)
+                log_agent_success(agent, f"refined image saved: {img_path.name}")
+            
+            # 记录 PPTX 和 PDF 路径
+            pptx_path = result.get("pptx_path")
+            pdf_path = result.get("pdf_path")
+            if pptx_path:
+                log_agent_success(agent, f"PPTX output: {pptx_path}")
+            if pdf_path:
+                log_agent_success(agent, f"PDF output: {pdf_path}")
+    else:
+        # 旧流程：iterative FlowEdit
+        refiner = PosterRefinerAgent(
+            zimage_model_name=zimage_model,
+            device=args.device,
+            style_name=style_type,
+            plan_text_spans=[],  # 方案 B：不直接传大列表给 agent，交由 tool 通过路径加载
+            plan_text_spans_path=plan_text_spans_path,
         )
 
-        refined.save(img_path)
-        log_agent_success(agent, f"refined image saved: {img_path.name}")
+        for img_path in image_paths:
+            log_agent_info(agent, f"refine image (legacy mode): {img_path.name}")
+            img = Image.open(img_path).convert("RGB")
+
+            # 让 PosterRefinerAgent 内部基于 style 和 plan_text_spans 构造 src/tar prompt，
+            # 这里仅设置清晰度阈值，保持调用接口简洁。
+            refined = refiner.run(
+                image=img,
+                clarity_threshold=9.9,
+                max_rounds=3,
+                bbox_limit=5,
+            )
+
+            refined.save(img_path)
+            log_agent_success(agent, f"refined image saved: {img_path.name}")
 
     log_agent_success(agent, "all images refined")
 
@@ -263,6 +312,8 @@ def main() -> None:
                         help="Device for local Z-Image (cuda/cpu)")
     parser.add_argument("--config", default=_DEFAULT_CONFIG_REL,
                         help="Path to agent config file (relative to agents/ or absolute)")
+    parser.add_argument("--refiner-mode", choices=["pptx", "legacy"], default="pptx",
+                        help="Refiner mode: 'pptx' (erase+render, outputs PPTX/PDF) or 'legacy' (iterative FlowEdit)")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
