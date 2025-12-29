@@ -119,22 +119,40 @@ class PosterPPTXRefiner:
         log_agent_start(_AGENT_NAME)
         log_agent_info(_AGENT_NAME, f"initialized with style={style_name}, model={zimage_model_name}")
     
-    def _estimate_font_size(self, bbox: BBox, text: str) -> int:
-        """根据 bbox 大小和文字长度估算合适的字体大小"""
-        width = bbox[2] - bbox[0]
-        height = bbox[3] - bbox[1]
+    def _estimate_font_size_for_inches(
+        self, 
+        width_inch: float, 
+        height_inch: float, 
+        text: str
+    ) -> int:
+        """根据英寸尺寸的 bbox 和文字长度估算合适的字体大小（Pt）
         
-        # 简单估算：根据高度和文字行数
-        lines = text.count('\n') + 1
-        max_font_by_height = int(height / lines * 0.8)
+        PPTX 字体单位是 Pt（点），1 英寸 = 72 Pt
+        """
+        if not text or not text.strip():
+            return 24
         
-        # 根据宽度和字符数估算
-        char_count = max(len(text.replace('\n', '')), 1)
-        max_font_by_width = int(width / (char_count * 0.6))
+        text_clean = text.replace('\n', ' ').strip()
+        char_count = len(text_clean)
         
-        # 取两者较小值，并限制范围
-        estimated = min(max_font_by_height, max_font_by_width)
-        return max(12, min(72, estimated))
+        # 将英寸转换为点: 1 inch = 72 pt
+        width_pt = width_inch * 72
+        height_pt = height_inch * 72
+        
+        # 从大到小尝试字号，找到能容纳所有文字的最大字号
+        for font_size in range(48, 11, -2):
+            # 估算每行能放多少字符（假设平均字符宽度约为字号的 0.6）
+            char_width_pt = font_size * 0.6
+            chars_per_line = max(1, int(width_pt / char_width_pt))
+            # 计算需要多少行
+            num_lines = (char_count + chars_per_line - 1) // chars_per_line
+            # 计算总高度（行高约为字号的 1.3 倍）
+            total_height_pt = num_lines * font_size * 1.3
+            
+            if total_height_pt <= height_pt:
+                return font_size
+        
+        return 12
     
     def _get_style_font_family(self) -> str:
         """根据样式获取默认字体"""
@@ -164,52 +182,6 @@ class PosterPPTXRefiner:
         
         return x_inch, y_inch, w_inch, h_inch
     
-    def _create_text_overlay_layout(
-        self,
-        regions: List[TextRegion],
-        image_width: int,
-        image_height: int,
-        poster_width: float = 48,
-        poster_height: float = 36,
-    ) -> Dict[str, Any]:
-        """创建文字叠加层的 PPTX 布局"""
-        elements = []
-        
-        for i, region in enumerate(regions):
-            if not region.matched_text:
-                continue
-            
-            x, y, w, h = self._convert_bbox_to_inches(
-                region.bbox,
-                image_width,
-                image_height,
-                poster_width,
-                poster_height,
-            )
-            
-            element = {
-                "type": "text",
-                "id": f"text_region_{i}",
-                "x": x,
-                "y": y,
-                "width": w,
-                "height": h,
-                "content": region.matched_text,
-                "font_family": region.font_family,
-                "font_size": region.font_size,
-                "font_color": region.font_color,
-                "bold": region.bold,
-                "alignment": "left",
-                "z_order": 10 + i,  # 文字层在背景之上
-            }
-            elements.append(element)
-        
-        return {
-            "width": poster_width,
-            "height": poster_height,
-            "slides": [{"elements": elements}],
-        }
-    
     def _render_text_to_image(
         self,
         regions: List[TextRegion],
@@ -219,47 +191,48 @@ class PosterPPTXRefiner:
         poster_width: float = 48,
         poster_height: float = 36,
     ) -> Optional[str]:
-        """将文字区域渲染为透明 PNG 图像
+        """将文字区域渲染为透明 PNG 图像（简化版预览）
         
-        使用 PPTX 渲染后转换，或直接使用 PIL 绘制
+        注意：这只是预览图，实际输出以 PPTX/PDF 为准。
+        PIL 渲染相比 PPTX 有局限性（字体支持、换行等），这里使用简化逻辑。
         """
         from PIL import ImageDraw, ImageFont
         
-        # 创建透明背景图像
         overlay = Image.new("RGBA", (image_width, image_height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
+        
+        # 计算像素与英寸的比例，用于将 Pt 字号转换为像素字号
+        # poster_width (英寸) 对应 image_width (像素)
+        pixels_per_inch = image_width / poster_width
         
         for region in regions:
             if not region.matched_text:
                 continue
             
             x0, y0, x1, y1 = region.bbox
+            box_width = x1 - x0
             
-            # 尝试加载字体
-            try:
-                font = ImageFont.truetype(
-                    f"/System/Library/Fonts/{region.font_family}.ttc",
-                    region.font_size
-                )
-            except:
-                try:
-                    font = ImageFont.truetype("arial.ttf", region.font_size)
-                except:
-                    font = ImageFont.load_default()
+            # 将 Pt 字号转换为像素字号 (1 inch = 72 pt)
+            font_size_px = int(region.font_size * pixels_per_inch / 72)
+            font_size_px = max(12, min(200, font_size_px))  # 限制范围
+            
+            # 加载字体（使用系统默认字体）
+            font = ImageFont.load_default()
             
             # 解析颜色
             color_hex = region.font_color.lstrip('#')
             r, g, b = (int(color_hex[i:i+2], 16) for i in (0, 2, 4))
             
-            # 绘制文字
+            # 简单的文本绘制（PPTX 会处理换行，这里只是预览）
             draw.text(
                 (x0, y0),
-                region.matched_text,
+                region.matched_text[:100] + ("..." if len(region.matched_text) > 100 else ""),
                 font=font,
                 fill=(r, g, b, 255),
             )
         
         overlay.save(output_path)
+        log_agent_info(_AGENT_NAME, f"Rendered text overlay preview to {output_path}")
         return output_path
     
     def _composite_background_and_text(
@@ -381,39 +354,37 @@ class PosterPPTXRefiner:
         log_agent_info(_AGENT_NAME, "Step 3: Matching text content for each region")
         
         plan_text_spans = []
-        if self.plan_text_spans_path:
-            try:
-                plan_text_spans = _load_plan_text_spans(self.plan_text_spans_path)
-                log_agent_info(_AGENT_NAME, f"loaded {len(plan_text_spans)} plan text spans")
-            except Exception as e:
-                log_agent_warning(_AGENT_NAME, f"failed to load plan text spans: {e}")
+        plan_text_spans = _load_plan_text_spans(self.plan_text_spans_path)
         
         for i, region in enumerate(valid_regions):
             # 裁剪区域
             patch = image.crop(region.bbox)
             
             # 匹配文字
-            matched_text = None
-            if plan_text_spans:
-                matched_text, meta = match_plan_text_for_patch(
-                    patch=patch,
-                    bbox=region.bbox,
-                    plan_text_spans=plan_text_spans,
-                    hint_text=region.text_content,
-                    agent_name=_AGENT_NAME,
-                )
+            matched_text, meta = match_plan_text_for_patch(
+                patch=patch,
+                bbox=region.bbox,
+                plan_text_spans=plan_text_spans,
+                hint_text=region.text_content,
+                agent_name=_AGENT_NAME,
+            )
             
             # 如果没有匹配到，使用 OCR 结果
             if not matched_text:
                 matched_text = region.text_content
             
             region.matched_text = matched_text
-            region.font_size = self._estimate_font_size(region.bbox, matched_text or "")
             region.bold = region.region_type in ("title", "section_title", "heading")
+            
+            # 计算英寸单位的尺寸，用于估算字号
+            _, _, w_inch, h_inch = self._convert_bbox_to_inches(
+                region.bbox, image_width, image_height, poster_width, poster_height
+            )
+            region.font_size = self._estimate_font_size_for_inches(w_inch, h_inch, matched_text or "")
             
             log_agent_info(
                 _AGENT_NAME,
-                f"region {i}: matched_text='{(matched_text or '')[:30]}...', font_size={region.font_size}"
+                f"region {i}: matched_text='{(matched_text or '')[:30]}...', font_size={region.font_size}pt"
             )
         
         # Step 4: 创建 PPTX 布局并渲染
