@@ -39,7 +39,7 @@ from paper2slides.utils.agent_artifact_logging import (
 
 # Import tools
 from paper2slides.agents.tools.image_content_grounding import ground_poster_text_regions_with_mineru_vlm
-from paper2slides.agents.tools.text_erase_flowedit import erase_multiple_text_regions
+from paper2slides.agents.tools.zimage_inpaint import inpaint_text_regions
 from paper2slides.agents.tools.poster_text_match import match_plan_text_for_patch, _load_plan_text_spans
 from paper2slides.agents.tools.pptx_renderer import render_layout_to_pptx, PPTXRenderer
 
@@ -325,17 +325,23 @@ class PosterPPTXRefiner:
                 "num_regions": 0,
             }
         
-        # Step 2: 擦除模糊文字，生成干净背景
-        log_agent_info(_AGENT_NAME, "Step 2: Erasing text regions to create clean background")
+        # Step 2: 使用 inpainting 擦除模糊文字，生成干净背景
+        log_agent_info(_AGENT_NAME, "Step 2: Inpainting text regions to create clean background")
         
-        erase_bboxes = [region.bbox for region in valid_regions]
+        inpaint_bboxes = [region.bbox for region in valid_regions]
         
-        background_description = f"clean {self.style_name} poster background with consistent colors and patterns"
+        # 使用 inpainting：mask 区域从纯噪声开始，非 mask 区域保持原图
+        inpaint_prompt = f"clean empty {self.style_name} poster background, seamless texture, no text"
+        inpaint_negative = "text, letters, words, characters, watermark, blurry text"
         
-        clean_background = erase_multiple_text_regions(
+        clean_background = inpaint_text_regions(
             image=image,
-            bboxes=erase_bboxes,
-            background_description=background_description,
+            bboxes=inpaint_bboxes,
+            prompt=inpaint_prompt,
+            negative_prompt=inpaint_negative,
+            strength=1.0,  # 完全从噪声重新生成 mask 区域
+            num_inference_steps=30,
+            guidance_scale=5.0,
         )
         
         background_path = os.path.join(output_dir, f"{poster_name}_background.png")
