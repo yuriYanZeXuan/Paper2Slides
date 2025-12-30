@@ -309,11 +309,10 @@ def inpaint_text_regions(
         擦除文字后的图像
     """
     cfg = get_flowedit_config()
+    # 优先级：传入参数 > 配置文件 > 默认值
+    # 注意：不再使用环境变量覆盖，因为 model_name 应该通过函数参数传递
     model_name = model_name or cfg.get("model_name") or "Tongyi-MAI/Z-Image-Turbo"
     device = device or cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # 使用环境变量覆盖模型路径
-    model_name = os.getenv("LOCAL_IMAGE_MODEL", model_name)
     
     log_agent_info("zimage_inpaint", f"loading model: {model_name}")
     pipe = _get_zimage_pipe(model_name, device)

@@ -339,6 +339,8 @@ class PosterPPTXRefiner:
             bboxes=inpaint_bboxes,
             prompt=inpaint_prompt,
             negative_prompt=inpaint_negative,
+            model_name=self.zimage_model_name,  # 使用传入的模型名称
+            device=self.device,  # 使用传入的设备
             strength=0.6,  # 完全从噪声重新生成 mask 区域
             num_inference_steps=8,
             guidance_scale=5.0,
