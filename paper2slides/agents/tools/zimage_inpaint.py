@@ -228,7 +228,7 @@ def zimage_inpaint(
     
     # 6. 初始化 latent
     # mask 区域从噪声开始，非 mask 区域从原图开始
-    noise = torch.randn_like(x0, generator=generator)
+    noise = torch.randn(x0.shape, generator=generator, device=x0.device, dtype=x0.dtype)
     
     if t_start > 0:
         # 如果 strength < 1，需要对原图加噪

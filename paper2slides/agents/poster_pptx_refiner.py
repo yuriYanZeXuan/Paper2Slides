@@ -339,8 +339,8 @@ class PosterPPTXRefiner:
             bboxes=inpaint_bboxes,
             prompt=inpaint_prompt,
             negative_prompt=inpaint_negative,
-            strength=1.0,  # 完全从噪声重新生成 mask 区域
-            num_inference_steps=30,
+            strength=0.6,  # 完全从噪声重新生成 mask 区域
+            num_inference_steps=8,
             guidance_scale=5.0,
         )
         
