@@ -326,9 +326,12 @@ class PPTXRenderer:
         align = element.get("alignment", "left").lower()
         vertical_align = element.get("vertical_align", element.get("vertical_alignment", "top")).lower()
 
-        # 如果 caller 没给 font_size，或者启用 fit_to_bbox，或者看起来是“正文”（非大标题），就自动估字号。
-        # 这能显著改善 run_076 里“字号过小、看起来不换行”的问题。
+        # 字号策略（强规则）：
+        # - 默认对“正文类文本”强制按 bbox 估字号（忽略上游传入的 font_size，避免 LLM 乱填导致过小）
+        # - 仅对标题/显式 keep_font_size 的元素保留 font_size
         keep_font_size = bool(element.get("keep_font_size", False))
+        # 可选：调用方可显式关闭强制规则
+        force_fit = bool(element.get("force_fit_to_bbox", True))
         auto_font = bool(element.get("auto_font_size", False) or element.get("fit_to_bbox", False))
         if font_size is None and not keep_font_size:
             auto_font = True
@@ -343,12 +346,40 @@ class PPTXRenderer:
             provided_fs = float(font_size_f) if font_size_f is not None else None
         except Exception:
             provided_fs = None
-        is_title_like = bool(element.get("bold", False)) and (provided_fs is not None and provided_fs >= 40)
+        # Title/header heuristic:
+        # - very large bold text is title-like
+        # - or explicit role/title types can be treated as title-like
+        role = str(element.get("role") or "").strip().lower()
+        is_title_like = (
+            (bool(element.get("bold", False)) and (provided_fs is not None and provided_fs >= 40))
+            or role in ("title", "header", "heading", "section_title")
+        )
 
         if keep_font_size:
             auto_font = False
         if is_title_like and not (element.get("fit_to_bbox") or element.get("auto_font_size")):
             auto_font = False
+
+        # 强制规则：对非标题文本，优先按 bbox 估字号（除非 keep_font_size 或显式 force_fit_to_bbox=false）
+        # 目的：把字号决策从 LLM 输出中剥离，完全按规则匹配 bbox 大小。
+        suggested_fs = None
+        override_small_font = False
+        if (not keep_font_size) and (not is_title_like):
+            try:
+                suggested_fs = float(self._auto_font_size_pt(text, w_in=w, h_in=h))
+            except Exception:
+                suggested_fs = None
+            if force_fit and suggested_fs is not None:
+                # always override for body text
+                override_small_font = True
+                auto_font = True
+            elif provided_fs is not None and suggested_fs is not None:
+                # backward-compatible soft override when force_fit is disabled
+                min_ratio = float(element.get("min_font_override_ratio", 0.75))
+                min_delta = float(element.get("min_font_override_delta", 3.0))
+                if provided_fs < suggested_fs * min_ratio and (suggested_fs - provided_fs) >= min_delta:
+                    override_small_font = True
+                    auto_font = True
 
         if auto_font:
             font_size_f = self._auto_font_size_pt(text, w_in=w, h_in=h)
@@ -401,7 +432,9 @@ class PPTXRenderer:
                     "font_family": str(font_name),
                     "font_size_pt_final": float(font_size_f),
                     "font_size_pt_provided": float(provided_fs) if provided_fs is not None else None,
+                    "font_size_pt_suggested": float(suggested_fs) if suggested_fs is not None else None,
                     "auto_font_used": bool(auto_font),
+                    "override_small_font": bool(override_small_font),
                     "shrink_to_fit": bool(shrink_to_fit),
                 }
             )
