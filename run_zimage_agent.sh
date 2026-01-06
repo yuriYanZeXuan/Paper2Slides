@@ -7,10 +7,13 @@ export LOCAL_IMAGE_WIDTH=1280
 
 LOCAL_IMAGE_MODEL="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image"
 
+# Qwen Image Edit 权重路径（供 eraser_qwen_editor 工具加载）
+export LOCAL_QWEN_EDIT_MODEL="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen_edit_2511"
+
 # Refiner 模式:
 #   - pptx: (默认) 新流程 - 擦除模糊文字 + PPTX 渲染清晰文字，输出 PPTX/PDF
 #   - legacy: 旧流程 - iterative FlowEdit
-REFINER_MODE="pptx"
+REFINER_MODE="legacy"
 
 python -m paper2slides.agents.zimage_pipeline_agent \
   --input /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/postergenparserunit/examples/tusen_1210.md \
