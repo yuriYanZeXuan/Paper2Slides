@@ -119,6 +119,42 @@ def match_plan_text_with_ocr(
     return matched_text, meta
 
 
+# ========= Backward-compat wrapper (no image/VLM) =========
+def match_plan_text_for_patch(
+    patch: Any,  # kept for compatibility; not used
+    bbox: BBox,  # kept for compatibility; only used for logging meta
+    plan_text_spans: List[Dict[str, Any]],
+    *,
+    max_candidates: int | None = None,
+    model: str | None = None,  # kept for compatibility; not used
+    hint_text: str | None = None,
+    agent_name: str = "poster_refiner",
+    log_root: str | None = None,
+) -> tuple[str | None, Dict[str, Any] | None]:
+    """兼容旧接口：不再使用 patch 图像或 VLM，只用 hint_text(OCR) 与 plan spans 做匹配。
+
+    旧代码（如 poster_pptx_refiner）会传 patch/bbox/hint_text。这里保留签名以避免 ImportError，
+    并将匹配逻辑退化为纯文本相似度匹配。
+    """
+    _ = patch
+    _ = model
+
+    matched_text, meta = match_plan_text_with_ocr(
+        ocr_text=str(hint_text or ""),
+        plan_text_spans=plan_text_spans,
+        max_candidates=max_candidates,
+    )
+    meta = {**(meta or {}), "bbox": [int(v) for v in bbox]}
+    if log_root:
+        save_json_log(
+            agent_name=agent_name,
+            func_name="match_text_with_ocr",
+            payload=meta,
+            log_root=log_root,
+        )
+    return matched_text, meta
+
+
 @register_tool("poster_text_match")
 class PosterTextMatch(BaseTool):
     """将 patch 里的文字匹配到 plan_text_spans（通过路径加载）。
