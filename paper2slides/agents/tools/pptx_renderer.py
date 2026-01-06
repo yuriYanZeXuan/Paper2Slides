@@ -89,6 +89,12 @@ class PPTXRenderer:
         """Render a single layout element"""
         element_type = element.get("type", "text")
         
+        # Allow treating a normal image as background via flags/role
+        if element_type == "image":
+            if element.get("is_background") or element.get("as_background") or str(element.get("role") or "").lower() == "background":
+                self._render_background_image(slide, element, image_map)
+                return
+
         if element_type == "text":
             self._render_text(slide, element)
         elif element_type == "title":
@@ -107,6 +113,23 @@ class PPTXRenderer:
         else:
             log_agent_warning("pptx_renderer", f"unknown element type: {element_type}, treating as text")
             self._render_text(slide, element)
+
+    def _resolve_image_path(self, element: Dict[str, Any], image_map: Optional[Dict[str, str]] = None) -> Optional[str]:
+        """Resolve image path from various possible keys, plus image_map."""
+        image_id = element.get("image_id", element.get("id", ""))
+        image_path = (
+            element.get("image_path")
+            or element.get("path")
+            or element.get("src")
+            or element.get("file")
+            or element.get("filepath")
+        )
+        if image_map and image_id:
+            image_path = image_map.get(str(image_id), image_path)
+        if not image_path:
+            return None
+        p = Path(str(image_path))
+        return str(p) if p.exists() else None
 
     # ---------- coordinate normalization (robust to agent param noise) ----------
     def _get_box_in_inches(self, element: Dict[str, Any]) -> tuple[float, float, float, float]:
@@ -307,15 +330,9 @@ class PPTXRenderer:
         w = element.get("width", element.get("w", w_in if w_in else None))
         h = element.get("height", element.get("h", h_in if h_in else None))
         
-        # Get image path
-        image_id = element.get("image_id", element.get("id", ""))
-        image_path = element.get("image_path", None)
-        
-        if image_map and image_id:
-            image_path = image_map.get(image_id, image_path)
-        
-        if not image_path or not Path(image_path).exists():
-            log_agent_warning("pptx_renderer", f"image not found: {image_path or image_id}")
+        image_path = self._resolve_image_path(element, image_map)
+        if not image_path:
+            log_agent_warning("pptx_renderer", "image not found (missing or path does not exist)")
             return
         
         left, top = Inches(x), Inches(y)
@@ -347,12 +364,9 @@ class PPTXRenderer:
         # Use same image resolution path logic as _render_image
         x, y, w, h = self._get_box_in_inches(element)
 
-        image_id = element.get("image_id", element.get("id", ""))
-        image_path = element.get("image_path", None)
-        if image_map and image_id:
-            image_path = image_map.get(image_id, image_path)
-        if not image_path or not Path(image_path).exists():
-            log_agent_warning("pptx_renderer", f"background image not found: {image_path or image_id}")
+        image_path = self._resolve_image_path(element, image_map)
+        if not image_path:
+            log_agent_warning("pptx_renderer", "background image not found (missing or path does not exist)")
             return
 
         pic = slide.shapes.add_picture(
@@ -468,6 +482,7 @@ def render_layout_to_pptx(
         Dict with 'pptx_path' and optionally 'pdf_path'
     """
     # Handle different layout data formats and extract dimensions
+    global_background = None
     if isinstance(layout_data, dict):
         if "slides" in layout_data:
             slides_data = layout_data["slides"]
@@ -480,6 +495,12 @@ def render_layout_to_pptx(
         # Override dimensions if specified in layout_data
         width = layout_data.get("width", width)
         height = layout_data.get("height", height)
+        # Optional global background path (applied to every slide)
+        global_background = (
+            layout_data.get("background_image_path")
+            or layout_data.get("bg_image_path")
+            or layout_data.get("background_path")
+        )
     elif isinstance(layout_data, list):
         if not layout_data:
             slides_data = []
@@ -508,6 +529,52 @@ def render_layout_to_pptx(
         # Handle slide-level properties
         if isinstance(slide_data, dict):
             elements = slide_data.get("elements", [slide_data])
+            # If slide has background info, insert as a background element first
+            bg = (
+                slide_data.get("background_image_path")
+                or slide_data.get("bg_image_path")
+                or slide_data.get("background_path")
+                or global_background
+            )
+            # Also support legacy/agent-produced "background": {"type":"image","image_path":...} or {"color":"#fff"}
+            bg_obj = slide_data.get("background")
+            if isinstance(bg_obj, dict):
+                # image background
+                if (
+                    bg_obj.get("image_path")
+                    or bg_obj.get("path")
+                    or bg_obj.get("src")
+                    or bg_obj.get("file")
+                    or bg_obj.get("filepath")
+                ):
+                    bg = bg_obj.get("image_path") or bg_obj.get("path") or bg_obj.get("src") or bg_obj.get("file") or bg_obj.get("filepath") or bg
+                # color background
+                elif bg_obj.get("color") or bg_obj.get("fill_color"):
+                    # Insert a color background element (rectangle) if present
+                    color = bg_obj.get("color", bg_obj.get("fill_color", "#FFFFFF"))
+                    elements = [
+                        {
+                            "type": "background",
+                            "color": color,
+                            "z_order": -10_000_000,
+                        }
+                    ] + list(elements if isinstance(elements, list) else [elements])
+            elif isinstance(bg_obj, str) and bg_obj.strip():
+                # If background is a path string
+                bg = bg_obj.strip()
+
+            if bg:
+                elements = [
+                    {
+                        "type": "background_image",
+                        "image_path": bg,
+                        "x": 0,
+                        "y": 0,
+                        "width": renderer.width,
+                        "height": renderer.height,
+                        "z_order": -10_000_000,
+                    }
+                ] + list(elements if isinstance(elements, list) else [elements])
             # Note: Individual slide dimensions are not supported in python-pptx
             # All slides in a presentation must have the same size
         else:
