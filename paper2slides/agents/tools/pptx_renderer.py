@@ -517,6 +517,67 @@ def render_layout_to_pptx(
     else:
         raise ValueError(f"Invalid layout_data type: {type(layout_data)}")
     
+    # -------- infer slide size from element bounds (robust to missing width/height args) --------
+    def _num(v, default=0.0) -> float:
+        try:
+            return float(v)
+        except Exception:
+            return float(default)
+
+    def _infer_bounds_from_element(el: Dict[str, Any]) -> tuple[float, float] | None:
+        # x/y/width/height or aliases
+        x = el.get("x", el.get("left", None))
+        y = el.get("y", el.get("top", None))
+        w = el.get("width", el.get("w", None))
+        h = el.get("height", el.get("h", None))
+        if x is not None and y is not None and w is not None and h is not None:
+            return _num(x) + max(0.0, _num(w)), _num(y) + max(0.0, _num(h))
+        # bbox interpreted as inches
+        bbox = el.get("bbox", None)
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            x0, y0, x1, y1 = bbox
+            x0f, y0f, x1f, y1f = _num(x0), _num(y0), _num(x1), _num(y1)
+            return max(x0f, x1f), max(y0f, y1f)
+        return None
+
+    inferred_w = float(width)
+    inferred_h = float(height)
+    for sd in slides_data:
+        if isinstance(sd, dict):
+            els = sd.get("elements", [])
+            if isinstance(els, dict):
+                els = [els]
+            if isinstance(els, list):
+                for el in els:
+                    if isinstance(el, dict):
+                        b = _infer_bounds_from_element(el)
+                        if b:
+                            inferred_w = max(inferred_w, float(b[0]))
+                            inferred_h = max(inferred_h, float(b[1]))
+            # also consider legacy slide-level background dict if present
+            bg_obj = sd.get("background")
+            if isinstance(bg_obj, dict):
+                b = _infer_bounds_from_element(bg_obj)
+                if b:
+                    inferred_w = max(inferred_w, float(b[0]))
+                    inferred_h = max(inferred_h, float(b[1]))
+        elif isinstance(sd, list):
+            for el in sd:
+                if isinstance(el, dict):
+                    b = _infer_bounds_from_element(el)
+                    if b:
+                        inferred_w = max(inferred_w, float(b[0]))
+                        inferred_h = max(inferred_h, float(b[1]))
+
+    # If inferred size is significantly larger than provided size, upgrade slide size.
+    # (Common when caller forgets to pass width/height but uses 48x36 coordinates.)
+    if inferred_w > float(width) * 1.05 or inferred_h > float(height) * 1.05:
+        log_agent_info(
+            "pptx_renderer",
+            f"auto-inferred slide size from elements: {width}x{height} -> {inferred_w:.2f}x{inferred_h:.2f}",
+        )
+        width, height = inferred_w, inferred_h
+
     # Create renderer with correct dimensions
     renderer = PPTXRenderer(width=width, height=height)
     
