@@ -359,7 +359,11 @@ def render_layout_to_pptx(
     """Render layout data to PPTX file.
     
     Args:
-        layout_data: Layout data (dict with 'slides' key or list of slide elements)
+        layout_data: Layout data. Accepted formats:
+            1. dict with "slides" key: {"slides": [{"elements": [...]}, ...]}
+            2. dict with "elements" key: {"elements": [...]} -> single slide
+            3. list of slide dicts: [{"elements": [...]}, ...]
+            4. list of element dicts (all on ONE slide): [{"type": "text", ...}, ...]
         output_path: Output PPTX file path
         width: Slide width in inches
         height: Slide height in inches
@@ -371,12 +375,30 @@ def render_layout_to_pptx(
     """
     # Handle different layout data formats and extract dimensions
     if isinstance(layout_data, dict):
-        slides_data = layout_data.get("slides", [layout_data])
+        if "slides" in layout_data:
+            slides_data = layout_data["slides"]
+        elif "elements" in layout_data:
+            # Single slide with elements list
+            slides_data = [layout_data]
+        else:
+            # Treat entire dict as single-element slide
+            slides_data = [{"elements": [layout_data]}]
         # Override dimensions if specified in layout_data
         width = layout_data.get("width", width)
         height = layout_data.get("height", height)
     elif isinstance(layout_data, list):
-        slides_data = layout_data
+        if not layout_data:
+            slides_data = []
+        else:
+            # Check if list contains element-like dicts (have "type" but no "elements")
+            # If so, treat entire list as elements of ONE slide
+            first = layout_data[0]
+            if isinstance(first, dict) and "type" in first and "elements" not in first:
+                # All items are elements -> wrap into single slide
+                slides_data = [{"elements": layout_data}]
+            else:
+                # Items are slides (each may have "elements" key)
+                slides_data = layout_data
     else:
         raise ValueError(f"Invalid layout_data type: {type(layout_data)}")
     

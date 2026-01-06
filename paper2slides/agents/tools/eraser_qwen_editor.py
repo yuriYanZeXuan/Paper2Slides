@@ -76,15 +76,28 @@ def _resize_longest_side(img: Image.Image, max_resolution: int) -> Image.Image:
 
 
 def _default_prompt(cfg: dict[str, Any]) -> str:
+    """构造擦除 prompt，强调用周围背景色进行 inpaint 填充。"""
     mode = str(cfg.get("mode", "text_and_figure") or "").strip().lower()
-    bg = str(cfg.get("background_description", "clean background with seamless texture") or "").strip()
+    bg = str(cfg.get("background_description", "") or "").strip()
+    # 如果用户未指定 background_description，使用更精准的 inpaint 风格描述
+    if not bg:
+        bg = "the surrounding background color seamlessly"
     if mode == "text":
-        return f"Remove all text. Fill with {bg}. No text."
+        return (
+            "Remove all text from this image. "
+            f"Inpaint the removed regions by filling with {bg}. "
+            "Do not add any new text. Preserve the original colors and style of surrounding areas."
+        )
     if mode == "figure":
-        return f"Remove the figure/chart/diagram content. Fill with {bg}. No text."
+        return (
+            "Remove the figure, chart, or diagram content. "
+            f"Inpaint the removed regions by filling with {bg}. "
+            "Do not add any new content. Preserve the original colors and style of surrounding areas."
+        )
     return (
         "Remove all text and any figure/chart/diagram content (including axes, legend, labels, markers). "
-        f"Fill with {bg}. No text."
+        f"Inpaint the removed regions by filling with {bg}. "
+        "Do not add any new text or content. Preserve the original colors and style of surrounding areas."
     )
 
 

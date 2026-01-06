@@ -38,3 +38,42 @@ text_match:
   # 匹配模型（留空则使用环境变量 POSTER_TEXT_MATCH_MODEL 或默认 gemini-3-pro）
   model: ""
 
+# Qwen-Image-Edit 擦除工具配置
+qwen_edit:
+  # 最长边的最大分辨率（保持长宽比缩放）
+  max_resolution: 1024
+  
+  # 推理步数
+  num_inference_steps: 40
+  
+  # guidance_scale
+  guidance_scale: 1.0
+  
+  # true_cfg_scale (Qwen 特有)
+  true_cfg_scale: 4.0
+  
+  # 随机种子
+  seed: 0
+  
+  # 是否恢复 bbox 外部区域为原图（true = 只保留 bbox 区域的编辑结果）
+  restore_outside_bboxes: true
+  
+  # bbox 扩展比例（0 = 不扩展）
+  pad_ratio: 0.0
+  
+  # 擦除模式: text / figure / text_and_figure
+  mode: "text_and_figure"
+  
+  # 背景描述（留空则使用默认 inpaint 风格描述）
+  # 例如: "white background" 或 "the surrounding background color seamlessly"
+  background_description: ""
+  
+  # 自定义 prompt（留空则根据 mode 自动生成）
+  prompt: ""
+  
+  # 模型名称（留空则使用环境变量 LOCAL_QWEN_EDIT_MODEL 或默认）
+  model_name: ""
+  
+  # 设备（硬编码为 cuda:1，此配置已被代码忽略）
+  device: ""
+
