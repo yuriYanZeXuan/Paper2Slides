@@ -77,40 +77,37 @@ class PosterRefinerAgent:
             "poster_text_score",
             "poster_text_grounding",
             "poster_text_match",
-            "poster_patch_flowedit",
+            # "poster_patch_flowedit",
             "eraser_qwen_editor",
             "pptx_renderer",
             # optional fallback (whole-image edit)
-            "zimage_flowedit",
+            # "zimage_flowedit",
         ]
         self._system_message = (
             "You are a helpful assistant assisting with the refinement of academic poster images.\n"
-            "Your goal is to improve text clarity using the provided tools.\n\n"
+            "Your goal is to improve text clarity by using a deterministic workflow: match text once, erase, then render via PPTX.\n\n"
             "Tools available:\n"
             "- poster_text_score: Check current text clarity.\n"
             "- poster_text_grounding: Find unclear text regions.\n"
-            "- poster_text_match: Get text content for a region.\n"
-            "- poster_patch_flowedit: Refine a specific region.\n"
-            "- eraser_qwen_editor: Erase text/figure content by editing the full image once, optionally keeping only bboxes edited.\n"
-            "- pptx_renderer: Render a PPTX with text boxes at given positions (in inches). Use rectangles as placeholders for images.\n"
-            "- zimage_flowedit: Refine the whole image (fallback).\n\n"
+            "- poster_text_match: Match the correct text content from plan spans for regions.\n"
+            "- eraser_qwen_editor: Erase text/figure content (edits full image once; can keep only bbox areas edited).\n"
+            "- pptx_renderer: Render a PPTX with text boxes at given positions (in inches). Use rectangles as placeholders for images.\n\n"
             "Operational Guide:\n"
-            "Please perform the refinement process step-by-step. Start by checking the score. "
-            "If the score indicates improvement is needed (below threshold), proceed to locate and refine text regions. "
-            "When using `poster_text_match`, please PASS the `grounding_ckpt_path` and `region_id` (from poster_text_grounding result) "
-            "so the tool can load the high-quality OCR content as a hint. This is better than passing raw text. "
-            "If you decide to use the erase+PPTX workflow:\n"
-            "1) Call poster_text_grounding to get regions (bboxes in pixels).\n"
-            "2) Call eraser_qwen_editor with the union of bboxes you want to erase (text and/or figures).\n"
-            "3) Build a PPTX layout: set a background image (the erased output), then for each bbox:\n"
-            "   - If you have text (from poster_text_match), add a text element.\n"
-            "   - Otherwise, add a rectangle shape as an image placeholder.\n"
-            "   Pixel bbox -> inches conversion (choose a canvas size, e.g. 48x36 inches):\n"
-            "   x_in = (x0 / img_w) * canvas_w, y_in = (y0 / img_h) * canvas_h,\n"
-            "   w_in = ((x1-x0) / img_w) * canvas_w, h_in = ((y1-y0) / img_h) * canvas_h.\n"
-            "4) Call pptx_renderer to save PPTX.\n"
-            "Continue this process until the image meets the quality standard or the maximum rounds are reached.\n\n"
-            "When the refinement is complete, please provide a summary in JSON format containing the final image path, score, and history."
+            "You MUST follow this workflow and MUST NOT use any FlowEdit/patching tools.\n"
+            "1) Call poster_text_score on the initial image. If score >= clarity_threshold, stop.\n"
+            "2) Call poster_text_grounding to get regions (pixel bboxes + grounding_ckpt_path).\n"
+            "3) Call poster_text_match EXACTLY ONCE in batch mode: pass image_path, bboxes, region_ids (from grounding regions), "
+            "plan_text_spans_path, and grounding_ckpt_path. Do NOT call poster_text_match multiple times.\n"
+            "4) Call eraser_qwen_editor to erase the union of regions you will re-render. Save the erased image path under work_dir "
+            "(this will also be logged by the tool).\n"
+            "5) Build a PPTX layout and call pptx_renderer:\n"
+            "   - Background: use the erased image as a full-canvas image element.\n"
+            "   - For each region:\n"
+            "     - If matched_text exists and is non-empty: add a text element at that bbox.\n"
+            "     - Else: add a rectangle shape as a placeholder.\n"
+            "   - Convert pixel bbox -> inches (choose canvas size 48x36 inches):\n"
+            "     x_in=(x0/img_w)*48, y_in=(y0/img_h)*36, w_in=((x1-x0)/img_w)*48, h_in=((y1-y0)/img_h)*36.\n"
+            "6) Finish by outputting JSON with: final_image_path (erased background path), pptx_path, final_score, and history."
         )
 
         log_agent_start("poster_refiner_agent")
@@ -153,7 +150,7 @@ class PosterRefinerAgent:
         # 这里按 max_rounds/bbox_limit 估算需要的 LLM call budget，并同时设置 env + settings 变量：
         # - env：供依赖 os.getenv 的场景
         # - settings：供已导入 settings 的运行时读取
-        tool_calls_per_round = 3 + 2 * int(bbox_limit)  # score + grounding + bbox*(match+patch_flowedit) + score_after
+        tool_calls_per_round = 6  # score + grounding + text_match(batch) + eraser + pptx + score_after
         est_tool_calls = int(max_rounds) * tool_calls_per_round + 5
         llm_budget = max(20, 2 * est_tool_calls)  # 2x safety factor
         os.environ["QWEN_AGENT_MAX_LLM_CALL_PER_RUN"] = str(llm_budget)
@@ -209,12 +206,12 @@ class PosterRefinerAgent:
             "- src_prompt: global style description\n"
             "- clarity_threshold, max_rounds, bbox_limit\n\n"
             "Task instructions:\n"
-            "1. Start with the initial image.\n"
-            "2. In each round, check the text score. If it's good enough, you can finish.\n"
-            "3. If not, find text regions and use the matching and patching tools to improve them.\n"
-            "4. Save intermediate results to the working directory.\n\n"
-            "Please start the process now. Once you are done, output the final result as a JSON object with keys: "
-            "final_image_path, final_score, rounds, history, and thoughts."
+            "1) Score -> Ground regions -> Match text (ONE batch call) -> Erase (Qwen) -> Render PPTX.\n"
+            "2) You MUST NOT use any FlowEdit/patch tools.\n"
+            "3) You MUST call poster_text_match only once using bboxes/region_ids batch mode.\n"
+            "4) Save the erased background image under work_dir (use that as final_image_path).\n"
+            "5) Use pptx_renderer to output a PPTX under work_dir. Use rectangle shapes as placeholders for image regions.\n\n"
+            "Once finished, output a JSON object with keys: final_image_path, pptx_path, final_score, rounds, history."
         )
 
         context = {
