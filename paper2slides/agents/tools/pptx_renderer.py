@@ -11,6 +11,8 @@ import platform
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 import re
+import os
+import math
 
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -46,6 +48,7 @@ class PPTXRenderer:
         self.prs.slide_height = Inches(height)
         self.width = width
         self.height = height
+        self._debug_records: list[dict[str, Any]] = []
     
     def _parse_color(self, color_str: str) -> RGBColor:
         """Parse hex color string to RGBColor"""
@@ -82,28 +85,48 @@ class PPTXRenderer:
         return total
 
     def _auto_font_size_pt(self, text: str, w_in: float, h_in: float, *, line_height_to_font_ratio: float = 1.2) -> float:
-        """按 bbox 尺寸与文本长度启发式估算一个“尽量填满框”的字号（pt）。"""
+        """按 bbox 尺寸与文本长度启发式估算一个“尽量填满框”的字号（pt），并考虑自动换行后的行数。
+
+        关键：我们不是把“行数=显式换行数”，而是用宽度估算会自动折行成多少行，然后用高度约束反推字号。
+        """
         cleaned = self._normalize_text_content(text)
         raw_lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+        # 如果没有显式换行，把整段当作一个 line（后续靠 wrap 估计行数）
         lines = raw_lines if raw_lines else [cleaned.strip()]
-        num_lines = max(1, len(lines))
 
         w_pt = max(1.0, float(w_in) * 72.0)
         h_pt = max(1.0, float(h_in) * 72.0)
-
-        # height constraint
-        line_height_pt = h_pt / float(num_lines)
         denom = line_height_to_font_ratio if line_height_to_font_ratio > 0 else 1.2
-        font_by_h = line_height_pt / denom
 
-        # width constraint
         eff_lens = [self._effective_text_len(ln) for ln in lines if ln]
-        max_eff = max(eff_lens) if eff_lens else 1.0
+        if not eff_lens:
+            return 12.0
+
+        # 宽度上限（假设一行内不换行）
+        max_eff = max(eff_lens)
         font_by_w = w_pt / max(1.0, max_eff)
 
-        # choose conservative and clamp
-        font_pt = max(7.0, min(200.0, min(font_by_h, font_by_w)))
-        return float(font_pt)
+        # 迭代：给定字号 -> 估算会折成多少行 -> 用高度约束反推最大字号
+        # 初始从 width 上限开始
+        font = max(7.0, min(200.0, float(font_by_w)))
+        for _ in range(6):
+            # 对每一条 line 估计折行数，求和得到总行数
+            total_lines = 0
+            for eff in eff_lens:
+                # 估算：该行在当前字号下的宽度 (pt) ~= eff_len * font
+                need = max(1, int(math.ceil((eff * font) / w_pt)))
+                total_lines += need
+            total_lines = max(1, total_lines)
+
+            font_by_h = (h_pt / float(total_lines)) / denom
+            new_font = min(float(font_by_w), float(font_by_h))
+            new_font = max(7.0, min(200.0, float(new_font)))
+            if abs(new_font - font) < 0.25:
+                font = new_font
+                break
+            font = new_font
+
+        return float(font)
     
     def add_slide(self):
         """Add a blank slide"""
@@ -280,14 +303,19 @@ class PPTXRenderer:
         # Word wrap: allow caller override, default True
         tf.word_wrap = bool(element.get("word_wrap", True))
 
-        # Auto size strategy:
-        # - For body text, enable TEXT_TO_FIT_SHAPE so PPT can shrink if we overshoot.
-        # - Titles can disable via element.disable_auto_fit=true
-        disable_auto_fit = bool(element.get("disable_auto_fit", False))
-        if disable_auto_fit:
-            tf.auto_size = MSO_AUTO_SIZE.NONE
-        else:
-            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        # 关键策略：默认优先“自动换行 + 估字号”，避免 TEXT_TO_FIT_SHAPE 把文本缩到一行里。
+        # 只有显式要求 shrink-to-fit 时才开启 TEXT_TO_FIT_SHAPE。
+        shrink_to_fit = bool(element.get("shrink_to_fit", False) or element.get("auto_fit", False))
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE if shrink_to_fit else MSO_AUTO_SIZE.NONE
+
+        # 减小内边距，让换行更贴近 bbox（best-effort）
+        try:
+            tf.margin_left = 0
+            tf.margin_right = 0
+            tf.margin_top = 0
+            tf.margin_bottom = 0
+        except Exception:
+            pass
         
         # Get text properties
         font_name = element.get("font_family", element.get("font_name", "Arial"))
@@ -298,10 +326,11 @@ class PPTXRenderer:
         align = element.get("alignment", "left").lower()
         vertical_align = element.get("vertical_align", element.get("vertical_alignment", "top")).lower()
 
-        # If caller didn't provide font_size or it is suspiciously small, auto-estimate from bbox.
-        # This is especially helpful when slide uses a large canvas (e.g., 48x36).
+        # 如果 caller 没给 font_size，或者启用 fit_to_bbox，或者看起来是“正文”（非大标题），就自动估字号。
+        # 这能显著改善 run_076 里“字号过小、看起来不换行”的问题。
+        keep_font_size = bool(element.get("keep_font_size", False))
         auto_font = bool(element.get("auto_font_size", False) or element.get("fit_to_bbox", False))
-        if font_size is None:
+        if font_size is None and not keep_font_size:
             auto_font = True
         try:
             font_size_f = float(font_size) if font_size is not None else None
@@ -309,11 +338,22 @@ class PPTXRenderer:
             font_size_f = None
             auto_font = True
 
+        # Heuristic: treat large/bold as title-like, keep its font_size unless explicitly fit_to_bbox.
+        try:
+            provided_fs = float(font_size_f) if font_size_f is not None else None
+        except Exception:
+            provided_fs = None
+        is_title_like = bool(element.get("bold", False)) and (provided_fs is not None and provided_fs >= 40)
+
+        if keep_font_size:
+            auto_font = False
+        if is_title_like and not (element.get("fit_to_bbox") or element.get("auto_font_size")):
+            auto_font = False
+
         if auto_font:
             font_size_f = self._auto_font_size_pt(text, w_in=w, h_in=h)
         else:
-            # keep provided
-            font_size_f = float(font_size_f if font_size_f is not None else 24.0)
+            font_size_f = float(provided_fs if provided_fs is not None else 24.0)
 
         # hard clamp
         font_size_f = max(7.0, min(200.0, float(font_size_f)))
@@ -348,6 +388,25 @@ class PPTXRenderer:
                 "right": PP_ALIGN.RIGHT,
             }
             p.alignment = align_map.get(align, PP_ALIGN.LEFT)
+
+        # Collect debug record (saved by tool wrapper when enabled)
+        try:
+            self._debug_records.append(
+                {
+                    "type": "text",
+                    "content_preview": (text[:200] + ("..." if len(text) > 200 else "")),
+                    "box_in": {"x": x, "y": y, "w": w, "h": h},
+                    "word_wrap": bool(tf.word_wrap),
+                    "auto_size": str(tf.auto_size),
+                    "font_family": str(font_name),
+                    "font_size_pt_final": float(font_size_f),
+                    "font_size_pt_provided": float(provided_fs) if provided_fs is not None else None,
+                    "auto_font_used": bool(auto_font),
+                    "shrink_to_fit": bool(shrink_to_fit),
+                }
+            )
+        except Exception:
+            pass
     
     def _render_title(self, slide, element: Dict[str, Any]):
         """Render title element with larger font"""
@@ -758,6 +817,15 @@ def render_layout_to_pptx(
     log_agent_success("pptx_renderer", f"saved PPTX: {pptx_path}")
     
     result = {"pptx_path": pptx_path}
+    # Attach internal debug info (caller/tool wrapper decides whether to persist it)
+    try:
+        result["_last_renderer_debug"] = {
+            "slide_size_in": {"width": float(renderer.width), "height": float(renderer.height)},
+            "num_debug_records": len(getattr(renderer, "_debug_records", []) or []),
+            "records": getattr(renderer, "_debug_records", []) or [],
+        }
+    except Exception:
+        pass
     
     # Convert to PDF if requested
     if convert_to_pdf:
@@ -823,6 +891,7 @@ class PPTXRendererTool(BaseTool):
         height = params.get('height', 9)
         image_map = params.get('image_map', None)
         convert_to_pdf = params.get('convert_to_pdf', False)
+        debug = bool(params.get("debug", False)) or str(os.getenv("PPTX_RENDER_DEBUG", "")).strip() in ("1", "true", "True")
         
         log_agent_info("pptx_renderer", f"starting render: output={output_path}, size={width}x{height}")
         
@@ -847,6 +916,17 @@ class PPTXRendererTool(BaseTool):
             image_map=image_map,
             convert_to_pdf=convert_to_pdf,
         )
+
+        # Save debug info if enabled
+        try:
+            if debug and "_last_renderer_debug" in result:
+                save_json_log(
+                    agent_name="pptx_renderer",
+                    func_name="render_debug",
+                    payload=result["_last_renderer_debug"],
+                )
+        except Exception:
+            pass
         
         # Save render result
         save_json_log(
@@ -855,6 +935,10 @@ class PPTXRendererTool(BaseTool):
             payload=result,
         )
         
+        # Do not expose internal debug payload to agent by default
+        if "_last_renderer_debug" in result:
+            result = dict(result)
+            result.pop("_last_renderer_debug", None)
         return json.dumps(result, ensure_ascii=False)
             
 
