@@ -430,42 +430,11 @@ class ImageGenerator:
             torch_dtype=torch.bfloat16,
             low_cpu_mem_usage=False,
         )
-        pipe.to(self.local_device)
+        # 固定：Z-Image 始终加载到 cuda:0
+        pipe.to("cuda:0")
         
         self._local_pipe = pipe
         return self._local_pipe
-
-    def _unload_local_pipeline(self) -> None:
-        """主动释放本地 pipeline 的 GPU 显存占用（用于避免与后续编辑模型冲突导致 OOM）。"""
-        if getattr(self, "_local_pipe", None) is None:
-            return
-        pipe = self._local_pipe
-        self._local_pipe = None
-        try:
-            # best-effort: move back to CPU before deleting
-            pipe.to("cpu")
-        except Exception:
-            pass
-        try:
-            del pipe
-        except Exception:
-            pass
-        try:
-            import gc
-            gc.collect()
-        except Exception:
-            pass
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                # ipc_collect is only available on some builds; best-effort
-                try:
-                    torch.cuda.ipc_collect()
-                except Exception:
-                    pass
-        except Exception:
-            pass
     
     def _get_qwen_pipeline(self):
         """Lazy-load Qwen DiffusionPipeline 模型。"""
@@ -494,7 +463,8 @@ class ImageGenerator:
         height = int(os.getenv("LOCAL_IMAGE_HEIGHT", 768))
         width = int(os.getenv("LOCAL_IMAGE_WIDTH", 1024))
         
-        generator = torch.Generator(device=self.local_device).manual_seed(42)
+        # 固定：Z-Image 始终使用 cuda:0
+        generator = torch.Generator(device="cuda:0").manual_seed(42)
         print(f"zimage image generation: {prompt}")
         image = pipe(
             prompt=prompt,
@@ -507,8 +477,6 @@ class ImageGenerator:
         print(f"zimage image generation: {prompt} done")
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
-        # 生成完成后立即卸载，避免后续 Qwen eraser/edit 时 OOM
-        self._unload_local_pipeline()
         return buffer.getvalue(), "image/png"
     
     def _call_qwen_local(self, prompt: str, reference_images: List[dict]) -> tuple:
@@ -546,8 +514,6 @@ class ImageGenerator:
         print(f"qwen image generation: {prompt + positive_magic} done")
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
-        # 对齐策略：生成完成后也卸载，避免显存长期驻留
-        self._unload_local_pipeline()
         return buffer.getvalue(), "image/png"
 
     def _call_gemini_native(self, prompt: str, reference_images: List[dict]) -> tuple:

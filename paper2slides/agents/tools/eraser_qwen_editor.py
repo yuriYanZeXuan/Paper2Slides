@@ -15,7 +15,6 @@ from typing import Any, List, Tuple, Union
 
 import torch
 from PIL import Image
-import gc
 
 from qwen_agent.tools.base import BaseTool, register_tool
 
@@ -101,40 +100,18 @@ def _get_pipe(model_name: str, device: str):
     return pipe
 
 
-def _unload_pipe(model_name: str, device: str) -> None:
-    """best-effort 卸载 pipeline 并释放 CUDA 显存。"""
-    key = f"{model_name}@{device}"
-    pipe = _PIPE_CACHE.pop(key, None)
-    if pipe is None:
-        return
-    try:
-        pipe.to("cpu")
-    except Exception:
-        pass
-    try:
-        del pipe
-    except Exception:
-        pass
-    try:
-        gc.collect()
-    except Exception:
-        pass
-    try:
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            try:
-                torch.cuda.ipc_collect()
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-
 @torch.inference_mode()
 def erase_with_qwen(image: Image.Image, bboxes: List[BBox]) -> tuple[Image.Image, dict[str, Any]]:
     cfg = _cfg()
     model_name = os.getenv("LOCAL_QWEN_EDIT_MODEL") or str(cfg.get("model_name") or "").strip() or "Qwen/Qwen-Image-Edit-2511"
-    device = str(cfg.get("device") or "").strip() or ("cuda" if torch.cuda.is_available() else "cpu")
+    # 固定：Qwen-Edit 始终使用 cuda:1（若只有一张卡则回退到 cuda:0 / cpu）
+    if torch.cuda.is_available():
+        if torch.cuda.device_count() >= 2:
+            device = "cuda:1"
+        else:
+            device = "cuda:0"
+    else:
+        device = "cpu"
     max_resolution = int(cfg.get("max_resolution", 1024))
     num_inference_steps = int(cfg.get("num_inference_steps", 40))
     guidance_scale = float(cfg.get("guidance_scale", 1.0))
@@ -151,23 +128,19 @@ def erase_with_qwen(image: Image.Image, bboxes: List[BBox]) -> tuple[Image.Image
 
     pipe = _get_pipe(model_name=model_name, device=device)
     gen = torch.Generator(device=device).manual_seed(seed)
-
-    try:
-        resized = _resize_longest_side(image, max_resolution=max_resolution)
-        out = pipe(
-            image=[resized],
-            prompt=used_prompt,
-            generator=gen,
-            true_cfg_scale=true_cfg_scale,
-            negative_prompt=" ",
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
-            num_images_per_prompt=1,
-        )
-        edited_full = out.images[0].resize(image.size, Image.LANCZOS)
-    finally:
-        # 用完立即卸载，避免与其它模型（Z-Image）显存冲突
-        _unload_pipe(model_name=model_name, device=device)
+    
+    resized = _resize_longest_side(image, max_resolution=max_resolution)
+    out = pipe(
+        image=[resized],
+        prompt=used_prompt,
+        generator=gen,
+        true_cfg_scale=true_cfg_scale,
+        negative_prompt=" ",
+        num_inference_steps=num_inference_steps,
+        guidance_scale=guidance_scale,
+        num_images_per_prompt=1,
+    )
+    edited_full = out.images[0].resize(image.size, Image.LANCZOS)
 
     if restore_outside and bboxes:
         final_img = image.copy()
