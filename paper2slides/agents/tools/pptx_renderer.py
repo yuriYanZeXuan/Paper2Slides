@@ -68,65 +68,41 @@ class PPTXRenderer:
         s = self._MD_CODE_RE.sub(r"\1", s)
         return s
 
-    _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
-
-    def _effective_text_len(self, line: str) -> float:
-        """折算一行文本的“em”长度（用于按宽度估算字号）。"""
-        if not line:
-            return 0.0
-        total = 0.0
-        for ch in line:
-            if ch.isspace():
-                total += 0.33
-            elif self._CJK_RE.match(ch):
-                total += 1.0
-            else:
-                total += 0.55
-        return total
-
-    def _auto_font_size_pt(self, text: str, w_in: float, h_in: float, *, line_height_to_font_ratio: float = 1.2) -> float:
-        """按 bbox 尺寸与文本长度启发式估算一个“尽量填满框”的字号（pt），并考虑自动换行后的行数。
-
-        关键：我们不是把“行数=显式换行数”，而是用宽度估算会自动折行成多少行，然后用高度约束反推字号。
+    def _auto_font_size_pt(self, text: str, w_in: float, h_in: float) -> float:
+        """按 bbox 尺寸简单估算字号（pt）：用 bbox 高度的 70% 作为字号基准。
+        
+        核心思路：文本框高度 * 0.7 / 行数 = 每行字号（考虑行距）。
+        这种方式简单、稳定，避免过于复杂的迭代逻辑。
         """
         cleaned = self._normalize_text_content(text)
-        raw_lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
-        # 如果没有显式换行，把整段当作一个 line（后续靠 wrap 估计行数）
-        lines = raw_lines if raw_lines else [cleaned.strip()]
-
-        w_pt = max(1.0, float(w_in) * 72.0)
-        h_pt = max(1.0, float(h_in) * 72.0)
-        denom = line_height_to_font_ratio if line_height_to_font_ratio > 0 else 1.2
-
-        eff_lens = [self._effective_text_len(ln) for ln in lines if ln]
-        if not eff_lens:
-            return 12.0
-
-        # 宽度上限（假设一行内不换行）
-        max_eff = max(eff_lens)
-        font_by_w = w_pt / max(1.0, max_eff)
-
-        # 迭代：给定字号 -> 估算会折成多少行 -> 用高度约束反推最大字号
-        # 初始从 width 上限开始
-        font = max(7.0, min(200.0, float(font_by_w)))
-        for _ in range(6):
-            # 对每一条 line 估计折行数，求和得到总行数
-            total_lines = 0
-            for eff in eff_lens:
-                # 估算：该行在当前字号下的宽度 (pt) ~= eff_len * font
-                need = max(1, int(math.ceil((eff * font) / w_pt)))
-                total_lines += need
-            total_lines = max(1, total_lines)
-
-            font_by_h = (h_pt / float(total_lines)) / denom
-            new_font = min(float(font_by_w), float(font_by_h))
-            new_font = max(7.0, min(200.0, float(new_font)))
-            if abs(new_font - font) < 0.25:
-                font = new_font
-                break
-            font = new_font
-
-        return float(font)
+        char_count = len(cleaned.replace(" ", "").replace("\n", ""))
+        if char_count == 0:
+            return 24.0
+        
+        # 估算行数：用 bbox 宽度 / 字符数 来粗估每行字符数，再算行数
+        # 假设英文字符平均宽度约 0.5em，bbox 宽度对应的 em 数约 w_in * 72 / font_size
+        # 简化：先用高度直接算，假设 1~3 行文本
+        h_pt = float(h_in) * 72.0
+        w_pt = float(w_in) * 72.0
+        
+        # 粗略估计：假设字符平均宽度 0.5 * font_size，那么一行能放 w_pt / (0.5 * font_size) 个字符
+        # 行数 = char_count / (w_pt / (0.5 * font_size)) = char_count * 0.5 * font_size / w_pt
+        # 同时行高 ~= 1.2 * font_size，总高度 ~= 行数 * 1.2 * font_size
+        # 联立：h_pt = (char_count * 0.5 * font_size / w_pt) * 1.2 * font_size
+        #       h_pt = 0.6 * char_count * font_size^2 / w_pt
+        #       font_size = sqrt(h_pt * w_pt / (0.6 * char_count))
+        
+        font_size = math.sqrt(h_pt * w_pt / max(1, 0.6 * char_count))
+        
+        # 同时用高度做上限：假设至少 1 行，字号不超过 h_pt / 1.2
+        font_size = min(font_size, h_pt / 1.2)
+        
+        # 用宽度做上限：假设最短的一行至少能放下
+        min_line_chars = min(20, max(5, char_count // 3))  # 假设最短行至少 5~20 字符
+        font_by_w = w_pt / (0.5 * min_line_chars)
+        font_size = min(font_size, font_by_w)
+        
+        return max(10.0, min(200.0, float(font_size)))
     
     def add_slide(self):
         """Add a blank slide"""
@@ -288,7 +264,11 @@ class PPTXRenderer:
         return 0.0, 0.0, 4.0, 1.0
     
     def _render_text(self, slide, element: Dict[str, Any]):
-        """Render text element"""
+        """Render text element.
+        
+        简化策略：所有文本都用 bbox 规则估算字号，忽略上游传入的 font_size。
+        这样可以避免 LLM 乱填字号导致的"字体过小"问题。
+        """
         x, y, w, h = self._get_box_in_inches(element)
         
         text = element.get("content", element.get("text", ""))
@@ -300,15 +280,10 @@ class PPTXRenderer:
             Inches(x), Inches(y), Inches(w), Inches(h)
         )
         tf = textbox.text_frame
-        # Word wrap: allow caller override, default True
-        tf.word_wrap = bool(element.get("word_wrap", True))
+        tf.word_wrap = True  # 始终开启自动换行
+        tf.auto_size = MSO_AUTO_SIZE.NONE  # 不自动缩放，让文字按我们算的字号渲染
 
-        # 关键策略：默认优先“自动换行 + 估字号”，避免 TEXT_TO_FIT_SHAPE 把文本缩到一行里。
-        # 只有显式要求 shrink-to-fit 时才开启 TEXT_TO_FIT_SHAPE。
-        shrink_to_fit = bool(element.get("shrink_to_fit", False) or element.get("auto_fit", False))
-        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE if shrink_to_fit else MSO_AUTO_SIZE.NONE
-
-        # 减小内边距，让换行更贴近 bbox（best-effort）
+        # 减小内边距
         try:
             tf.margin_left = 0
             tf.margin_right = 0
@@ -317,141 +292,66 @@ class PPTXRenderer:
         except Exception:
             pass
         
-        # Get text properties
+        # 文本属性
         font_name = element.get("font_family", element.get("font_name", "Arial"))
-        font_size = element.get("font_size", None)
         font_color = element.get("font_color", element.get("color", "#000000"))
         bold = element.get("bold", element.get("font_weight") == "bold")
         italic = element.get("italic", False)
         align = element.get("alignment", "left").lower()
         vertical_align = element.get("vertical_align", element.get("vertical_alignment", "top")).lower()
 
-        # 字号策略（强规则）：
-        # - 默认对“正文类文本”强制按 bbox 估字号（忽略上游传入的 font_size，避免 LLM 乱填导致过小）
-        # - 仅对标题/显式 keep_font_size 的元素保留 font_size
-        keep_font_size = bool(element.get("keep_font_size", False))
-        # 可选：调用方可显式关闭强制规则
-        force_fit = bool(element.get("force_fit_to_bbox", True))
-        auto_font = bool(element.get("auto_font_size", False) or element.get("fit_to_bbox", False))
-        if font_size is None and not keep_font_size:
-            auto_font = True
+        # 字号：强制按 bbox 估算，忽略上游 font_size（除非显式 keep_font_size=true）
+        provided_fs = None
         try:
-            font_size_f = float(font_size) if font_size is not None else None
+            provided_fs = float(element.get("font_size")) if element.get("font_size") is not None else None
         except Exception:
-            font_size_f = None
-            auto_font = True
-
-        # Heuristic: treat large/bold as title-like, keep its font_size unless explicitly fit_to_bbox.
-        try:
-            provided_fs = float(font_size_f) if font_size_f is not None else None
-        except Exception:
-            provided_fs = None
-        # Title/header heuristic:
-        # - very large bold text is title-like
-        # - or explicit role/title types can be treated as title-like
-        role = str(element.get("role") or "").strip().lower()
-        is_title_like = (
-            (bool(element.get("bold", False)) and (provided_fs is not None and provided_fs >= 40))
-            or role in ("title", "header", "heading", "section_title")
-        )
-
-        if keep_font_size:
-            auto_font = False
-        if is_title_like and not (element.get("fit_to_bbox") or element.get("auto_font_size")):
-            auto_font = False
-
-        # 强制规则：对非标题文本，优先按 bbox 估字号（除非 keep_font_size 或显式 force_fit_to_bbox=false）
-        # 目的：把字号决策从 LLM 输出中剥离，完全按规则匹配 bbox 大小。
-        suggested_fs = None
-        override_small_font = False
-        if (not keep_font_size) and (not is_title_like):
-            try:
-                suggested_fs = float(self._auto_font_size_pt(text, w_in=w, h_in=h))
-            except Exception:
-                suggested_fs = None
-            if force_fit and suggested_fs is not None:
-                # always override for body text
-                override_small_font = True
-                auto_font = True
-            elif provided_fs is not None and suggested_fs is not None:
-                # backward-compatible soft override when force_fit is disabled
-                min_ratio = float(element.get("min_font_override_ratio", 0.75))
-                min_delta = float(element.get("min_font_override_delta", 3.0))
-                if provided_fs < suggested_fs * min_ratio and (suggested_fs - provided_fs) >= min_delta:
-                    override_small_font = True
-                    auto_font = True
-
-        if auto_font:
-            font_size_f = self._auto_font_size_pt(text, w_in=w, h_in=h)
-        else:
-            font_size_f = float(provided_fs if provided_fs is not None else 24.0)
-
-        # hard clamp
-        font_size_f = max(7.0, min(200.0, float(font_size_f)))
+            pass
         
-        # Vertical alignment
-        anchor_map = {
-            "top": MSO_ANCHOR.TOP,
-            "middle": MSO_ANCHOR.MIDDLE,
-            "bottom": MSO_ANCHOR.BOTTOM,
-        }
+        if element.get("keep_font_size") and provided_fs is not None:
+            font_size_f = provided_fs
+        else:
+            font_size_f = self._auto_font_size_pt(text, w_in=w, h_in=h)
+        
+        font_size_f = max(10.0, min(200.0, float(font_size_f)))
+        
+        # 垂直对齐
+        anchor_map = {"top": MSO_ANCHOR.TOP, "middle": MSO_ANCHOR.MIDDLE, "bottom": MSO_ANCHOR.BOTTOM}
         tf.vertical_anchor = anchor_map.get(vertical_align, MSO_ANCHOR.TOP)
         
-        # Handle multiline text
+        # 渲染文本
         lines = text.split('\n')
         for i, line in enumerate(lines):
-            if i == 0:
-                p = tf.paragraphs[0]
-            else:
-                p = tf.add_paragraph()
-            
+            p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.text = line
             p.font.name = font_name
             p.font.size = Pt(int(round(font_size_f)))
             p.font.color.rgb = self._parse_color(font_color)
             p.font.bold = bold
             p.font.italic = italic
-            
-            # Horizontal alignment
-            align_map = {
-                "left": PP_ALIGN.LEFT,
-                "center": PP_ALIGN.CENTER,
-                "right": PP_ALIGN.RIGHT,
-            }
+            align_map = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
             p.alignment = align_map.get(align, PP_ALIGN.LEFT)
 
-        # Collect debug record (saved by tool wrapper when enabled)
+        # Debug 记录
         try:
-            self._debug_records.append(
-                {
-                    "type": "text",
-                    "content_preview": (text[:200] + ("..." if len(text) > 200 else "")),
-                    "box_in": {"x": x, "y": y, "w": w, "h": h},
-                    "word_wrap": bool(tf.word_wrap),
-                    "auto_size": str(tf.auto_size),
-                    "font_family": str(font_name),
-                    "font_size_pt_final": float(font_size_f),
-                    "font_size_pt_provided": float(provided_fs) if provided_fs is not None else None,
-                    "font_size_pt_suggested": float(suggested_fs) if suggested_fs is not None else None,
-                    "auto_font_used": bool(auto_font),
-                    "override_small_font": bool(override_small_font),
-                    "shrink_to_fit": bool(shrink_to_fit),
-                }
-            )
+            self._debug_records.append({
+                "type": "text",
+                "content_preview": text[:100],
+                "box_in": {"x": x, "y": y, "w": w, "h": h},
+                "font_size_pt_final": float(font_size_f),
+                "font_size_pt_provided": float(provided_fs) if provided_fs else None,
+            })
         except Exception:
             pass
     
     def _render_title(self, slide, element: Dict[str, Any]):
-        """Render title element with larger font"""
+        """Render title element (bold, auto-sized by bbox)"""
         element_copy = element.copy()
-        element_copy["font_size"] = element.get("font_size", 48)
         element_copy["bold"] = True
         self._render_text(slide, element_copy)
     
     def _render_section_title(self, slide, element: Dict[str, Any]):
-        """Render section title"""
+        """Render section title (bold, auto-sized by bbox)"""
         element_copy = element.copy()
-        element_copy["font_size"] = element.get("font_size", 36)
         element_copy["bold"] = True
         self._render_text(slide, element_copy)
     
