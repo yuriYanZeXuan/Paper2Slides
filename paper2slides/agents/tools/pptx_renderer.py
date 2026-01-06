@@ -88,6 +88,18 @@ class PPTXRenderer:
     def render_element(self, slide, element: Dict[str, Any], image_map: Optional[Dict[str, str]] = None):
         """Render a single layout element"""
         element_type = element.get("type", "text")
+        # Be robust to common aliases from LLMs / other generators
+        if isinstance(element_type, str):
+            et = element_type.strip().lower()
+            alias_map = {
+                "textbox": "text",
+                "text_box": "text",
+                "text-box": "text",
+                "textblock": "text",
+                "backgroundimage": "background_image",
+                "bgimage": "background_image",
+            }
+            element_type = alias_map.get(et, et)
         
         # Allow treating a normal image as background via flags/role
         if element_type == "image":
