@@ -10,6 +10,7 @@ import subprocess
 import platform
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
+import re
 
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -51,6 +52,58 @@ class PPTXRenderer:
         hex_color = color_str.lstrip('#')
         r, g, b = (int(hex_color[i:i+2], 16) for i in (0, 2, 4))
         return RGBColor(r, g, b)
+
+    _MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+    _MD_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\s)(.+?)(?<!\s)\*(?!\*)")
+    _MD_CODE_RE = re.compile(r"`([^`]+)`")
+
+    def _normalize_text_content(self, text: str) -> str:
+        """清理常见 markdown 符号（避免把 ** ** 等渲染进 PPT）。"""
+        s = str(text or "")
+        s = self._MD_BOLD_RE.sub(r"\1", s)
+        s = self._MD_ITALIC_RE.sub(r"\1", s)
+        s = self._MD_CODE_RE.sub(r"\1", s)
+        return s
+
+    _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+    def _effective_text_len(self, line: str) -> float:
+        """折算一行文本的“em”长度（用于按宽度估算字号）。"""
+        if not line:
+            return 0.0
+        total = 0.0
+        for ch in line:
+            if ch.isspace():
+                total += 0.33
+            elif self._CJK_RE.match(ch):
+                total += 1.0
+            else:
+                total += 0.55
+        return total
+
+    def _auto_font_size_pt(self, text: str, w_in: float, h_in: float, *, line_height_to_font_ratio: float = 1.2) -> float:
+        """按 bbox 尺寸与文本长度启发式估算一个“尽量填满框”的字号（pt）。"""
+        cleaned = self._normalize_text_content(text)
+        raw_lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+        lines = raw_lines if raw_lines else [cleaned.strip()]
+        num_lines = max(1, len(lines))
+
+        w_pt = max(1.0, float(w_in) * 72.0)
+        h_pt = max(1.0, float(h_in) * 72.0)
+
+        # height constraint
+        line_height_pt = h_pt / float(num_lines)
+        denom = line_height_to_font_ratio if line_height_to_font_ratio > 0 else 1.2
+        font_by_h = line_height_pt / denom
+
+        # width constraint
+        eff_lens = [self._effective_text_len(ln) for ln in lines if ln]
+        max_eff = max(eff_lens) if eff_lens else 1.0
+        font_by_w = w_pt / max(1.0, max_eff)
+
+        # choose conservative and clamp
+        font_pt = max(7.0, min(200.0, min(font_by_h, font_by_w)))
+        return float(font_pt)
     
     def add_slide(self):
         """Add a blank slide"""
@@ -218,22 +271,52 @@ class PPTXRenderer:
         text = element.get("content", element.get("text", ""))
         if not text:
             return
+        text = self._normalize_text_content(text)
         
         textbox = slide.shapes.add_textbox(
             Inches(x), Inches(y), Inches(w), Inches(h)
         )
         tf = textbox.text_frame
-        tf.word_wrap = True
-        tf.auto_size = MSO_AUTO_SIZE.NONE
+        # Word wrap: allow caller override, default True
+        tf.word_wrap = bool(element.get("word_wrap", True))
+
+        # Auto size strategy:
+        # - For body text, enable TEXT_TO_FIT_SHAPE so PPT can shrink if we overshoot.
+        # - Titles can disable via element.disable_auto_fit=true
+        disable_auto_fit = bool(element.get("disable_auto_fit", False))
+        if disable_auto_fit:
+            tf.auto_size = MSO_AUTO_SIZE.NONE
+        else:
+            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
         
         # Get text properties
         font_name = element.get("font_family", element.get("font_name", "Arial"))
-        font_size = element.get("font_size", 24)
+        font_size = element.get("font_size", None)
         font_color = element.get("font_color", element.get("color", "#000000"))
         bold = element.get("bold", element.get("font_weight") == "bold")
         italic = element.get("italic", False)
         align = element.get("alignment", "left").lower()
         vertical_align = element.get("vertical_align", element.get("vertical_alignment", "top")).lower()
+
+        # If caller didn't provide font_size or it is suspiciously small, auto-estimate from bbox.
+        # This is especially helpful when slide uses a large canvas (e.g., 48x36).
+        auto_font = bool(element.get("auto_font_size", False) or element.get("fit_to_bbox", False))
+        if font_size is None:
+            auto_font = True
+        try:
+            font_size_f = float(font_size) if font_size is not None else None
+        except Exception:
+            font_size_f = None
+            auto_font = True
+
+        if auto_font:
+            font_size_f = self._auto_font_size_pt(text, w_in=w, h_in=h)
+        else:
+            # keep provided
+            font_size_f = float(font_size_f if font_size_f is not None else 24.0)
+
+        # hard clamp
+        font_size_f = max(7.0, min(200.0, float(font_size_f)))
         
         # Vertical alignment
         anchor_map = {
@@ -253,7 +336,7 @@ class PPTXRenderer:
             
             p.text = line
             p.font.name = font_name
-            p.font.size = Pt(font_size)
+            p.font.size = Pt(int(round(font_size_f)))
             p.font.color.rgb = self._parse_color(font_color)
             p.font.bold = bold
             p.font.italic = italic
