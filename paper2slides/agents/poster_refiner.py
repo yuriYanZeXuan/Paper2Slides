@@ -101,7 +101,8 @@ class PosterRefinerAgent:
             "4) Call eraser_qwen_editor to erase the union of regions you will re-render. Save the erased image path under work_dir "
             "(this will also be logged by the tool).\n"
             "5) Build a PPTX layout and call pptx_renderer:\n"
-            "   - Background: use the erased image as a full-canvas image element.\n"
+            "   - Background: use the erased image as a full-canvas background image element.\n"
+            "     Prefer: {type:'background_image', image_path: erased_path, x:0,y:0,width:48,height:36, z_order:-1000}\n"
             "   - For each region:\n"
             "     - If matched_text exists and is non-empty: add a text element at that bbox.\n"
             "       IMPORTANT: Use poster_text_match's returned style_hint if available:\n"
@@ -110,6 +111,7 @@ class PosterRefinerAgent:
             "     - Else: add a rectangle shape as a placeholder.\n"
             "   - Convert pixel bbox -> inches (choose canvas size 48x36 inches):\n"
             "     x_in=(x0/img_w)*48, y_in=(y0/img_h)*36, w_in=((x1-x0)/img_w)*48, h_in=((y1-y0)/img_h)*36.\n"
+            "   - IMPORTANT: All element boxes must use keys x/y/width/height in inches. (Aliases left/top/w/h are also accepted.)\n"
             "6) Finish by outputting JSON with: final_image_path (erased background path), pptx_path, final_score, and history."
         )
 

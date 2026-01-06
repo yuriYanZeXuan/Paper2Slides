@@ -99,18 +99,86 @@ class PPTXRenderer:
             self._render_shape(slide, element)
         elif element_type == "image":
             self._render_image(slide, element, image_map)
+        elif element_type in ("background_image", "bg_image"):
+            # Dedicated background image element (full-canvas by default)
+            self._render_background_image(slide, element, image_map)
         elif element_type == "background":
             self._render_background(slide, element)
         else:
             log_agent_warning("pptx_renderer", f"unknown element type: {element_type}, treating as text")
             self._render_text(slide, element)
+
+    # ---------- coordinate normalization (robust to agent param noise) ----------
+    def _get_box_in_inches(self, element: Dict[str, Any]) -> tuple[float, float, float, float]:
+        """Return (x,y,w,h) in inches.
+
+        Supported keys (best-effort):
+        - x/y/width/height
+        - left/top/w/h
+        - bbox: [x0,y0,x1,y1] (interpreted as inches unless pixel conversion info is available)
+        - bbox_px: [x0,y0,x1,y1] (requires image_width_px/image_height_px + canvas_width_in/canvas_height_in)
+        Pixel conversion context:
+        - element.image_width_px / element.image_height_px or element-level image_size_px
+        - element.canvas_width_in / element.canvas_height_in
+        """
+        def _num(v, default=0.0) -> float:
+            try:
+                return float(v)
+            except Exception:
+                return float(default)
+
+        # direct inches
+        x = element.get("x", element.get("left", None))
+        y = element.get("y", element.get("top", None))
+        w = element.get("width", element.get("w", None))
+        h = element.get("height", element.get("h", None))
+        if x is not None and y is not None and w is not None and h is not None:
+            return _num(x, 0.0), _num(y, 0.0), _num(w, 4.0), _num(h, 1.0)
+
+        # bbox / bbox_px
+        bbox = element.get("bbox_px", None)
+        bbox_kind = "px"
+        if bbox is None:
+            bbox = element.get("bbox", None)
+            bbox_kind = "unknown"
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            x0, y0, x1, y1 = bbox
+            # Try pixel->inch conversion if context exists OR looks like pixels
+            img_w_px = element.get("image_width_px", None)
+            img_h_px = element.get("image_height_px", None)
+            if (img_w_px is None or img_h_px is None) and isinstance(element.get("image_size_px"), dict):
+                img_w_px = element["image_size_px"].get("width")
+                img_h_px = element["image_size_px"].get("height")
+            canvas_w_in = element.get("canvas_width_in", None)
+            canvas_h_in = element.get("canvas_height_in", None)
+            if canvas_w_in is None:
+                canvas_w_in = element.get("slide_width_in", None)
+            if canvas_h_in is None:
+                canvas_h_in = element.get("slide_height_in", None)
+
+            x0f, y0f, x1f, y1f = _num(x0), _num(y0), _num(x1), _num(y1)
+            looks_like_px = max(x0f, y0f, x1f, y1f) > max(self.width, self.height) * 2
+
+            if (bbox_kind == "px" or looks_like_px) and img_w_px and img_h_px and canvas_w_in and canvas_h_in:
+                iw = max(1.0, _num(img_w_px, 1.0))
+                ih = max(1.0, _num(img_h_px, 1.0))
+                cw = max(0.01, _num(canvas_w_in, self.width))
+                ch = max(0.01, _num(canvas_h_in, self.height))
+                xi = (x0f / iw) * cw
+                yi = (y0f / ih) * ch
+                wi = ((x1f - x0f) / iw) * cw
+                hi = ((y1f - y0f) / ih) * ch
+                return xi, yi, wi, hi
+
+            # treat as inches bbox
+            return x0f, y0f, max(0.01, x1f - x0f), max(0.01, y1f - y0f)
+
+        # fallback
+        return 0.0, 0.0, 4.0, 1.0
     
     def _render_text(self, slide, element: Dict[str, Any]):
         """Render text element"""
-        x = element.get("x", 0)
-        y = element.get("y", 0)
-        w = element.get("width", 4)
-        h = element.get("height", 1)
+        x, y, w, h = self._get_box_in_inches(element)
         
         text = element.get("content", element.get("text", ""))
         if not text:
@@ -179,10 +247,7 @@ class PPTXRenderer:
     
     def _render_shape(self, slide, element: Dict[str, Any]):
         """Render shape element (rectangle, rounded_rectangle, oval)"""
-        x = element.get("x", 0)
-        y = element.get("y", 0)
-        w = element.get("width", 2)
-        h = element.get("height", 1)
+        x, y, w, h = self._get_box_in_inches(element)
         
         shape_type = element.get("shape_type", "rectangle").lower()
         fill_color = element.get("fill_color", element.get("color", "#FFFFFF"))
@@ -237,10 +302,10 @@ class PPTXRenderer:
     
     def _render_image(self, slide, element: Dict[str, Any], image_map: Optional[Dict[str, str]] = None):
         """Render image element"""
-        x = element.get("x", 0)
-        y = element.get("y", 0)
-        w = element.get("width", None)
-        h = element.get("height", None)
+        x, y, w_in, h_in = self._get_box_in_inches(element)
+        # Allow None if not provided (kept for backward compatibility)
+        w = element.get("width", element.get("w", w_in if w_in else None))
+        h = element.get("height", element.get("h", h_in if h_in else None))
         
         # Get image path
         image_id = element.get("image_id", element.get("id", ""))
@@ -270,6 +335,35 @@ class PPTXRenderer:
             )
         else:
             slide.shapes.add_picture(image_path, left, top)
+
+    def _render_background_image(self, slide, element: Dict[str, Any], image_map: Optional[Dict[str, str]] = None):
+        """Render a background image (full-canvas by default) and move it to back."""
+        # Fill the slide by default
+        element = dict(element)
+        element.setdefault("x", 0)
+        element.setdefault("y", 0)
+        element.setdefault("width", self.width)
+        element.setdefault("height", self.height)
+        # Use same image resolution path logic as _render_image
+        x, y, w, h = self._get_box_in_inches(element)
+
+        image_id = element.get("image_id", element.get("id", ""))
+        image_path = element.get("image_path", None)
+        if image_map and image_id:
+            image_path = image_map.get(image_id, image_path)
+        if not image_path or not Path(image_path).exists():
+            log_agent_warning("pptx_renderer", f"background image not found: {image_path or image_id}")
+            return
+
+        pic = slide.shapes.add_picture(
+            image_path, Inches(x), Inches(y), width=Inches(w), height=Inches(h)
+        )
+
+        # Move to back
+        sp = pic._element
+        spTree = sp.getparent()
+        spTree.remove(sp)
+        spTree.insert(0, sp)
     
     def _render_background(self, slide, element: Dict[str, Any]):
         """Render background element"""
