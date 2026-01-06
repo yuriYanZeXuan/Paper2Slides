@@ -15,6 +15,8 @@ from paper2slides.agents.tools import image_content_grounding as _poster_text_gr
 from paper2slides.agents.tools import zimage_flowedit_tool as _zimage_flowedit_tool  # noqa: F401
 from paper2slides.agents.tools import poster_text_match as _poster_text_match_tool  # noqa: F401
 from paper2slides.agents.tools import poster_patch_flowedit as _poster_patch_flowedit_tool  # noqa: F401
+from paper2slides.agents.tools import eraser_qwen_editor as _eraser_qwen_editor_tool  # noqa: F401
+from paper2slides.agents.tools import pptx_renderer as _pptx_renderer_tool  # noqa: F401
 from paper2slides.utils.agent_logging import *
 from paper2slides.utils.agent_artifact_logging import (
     save_json_log,
@@ -76,6 +78,8 @@ class PosterRefinerAgent:
             "poster_text_grounding",
             "poster_text_match",
             "poster_patch_flowedit",
+            "eraser_qwen_editor",
+            "pptx_renderer",
             # optional fallback (whole-image edit)
             "zimage_flowedit",
         ]
@@ -87,12 +91,24 @@ class PosterRefinerAgent:
             "- poster_text_grounding: Find unclear text regions.\n"
             "- poster_text_match: Get text content for a region.\n"
             "- poster_patch_flowedit: Refine a specific region.\n"
+            "- eraser_qwen_editor: Erase text/figure content by editing the full image once, optionally keeping only bboxes edited.\n"
+            "- pptx_renderer: Render a PPTX with text boxes at given positions (in inches). Use rectangles as placeholders for images.\n"
             "- zimage_flowedit: Refine the whole image (fallback).\n\n"
             "Operational Guide:\n"
             "Please perform the refinement process step-by-step. Start by checking the score. "
             "If the score indicates improvement is needed (below threshold), proceed to locate and refine text regions. "
             "When using `poster_text_match`, please PASS the `grounding_ckpt_path` and `region_id` (from poster_text_grounding result) "
             "so the tool can load the high-quality OCR content as a hint. This is better than passing raw text. "
+            "If you decide to use the erase+PPTX workflow:\n"
+            "1) Call poster_text_grounding to get regions (bboxes in pixels).\n"
+            "2) Call eraser_qwen_editor with the union of bboxes you want to erase (text and/or figures).\n"
+            "3) Build a PPTX layout: set a background image (the erased output), then for each bbox:\n"
+            "   - If you have text (from poster_text_match), add a text element.\n"
+            "   - Otherwise, add a rectangle shape as an image placeholder.\n"
+            "   Pixel bbox -> inches conversion (choose a canvas size, e.g. 48x36 inches):\n"
+            "   x_in = (x0 / img_w) * canvas_w, y_in = (y0 / img_h) * canvas_h,\n"
+            "   w_in = ((x1-x0) / img_w) * canvas_w, h_in = ((y1-y0) / img_h) * canvas_h.\n"
+            "4) Call pptx_renderer to save PPTX.\n"
             "Continue this process until the image meets the quality standard or the maximum rounds are reached.\n\n"
             "When the refinement is complete, please provide a summary in JSON format containing the final image path, score, and history."
         )
