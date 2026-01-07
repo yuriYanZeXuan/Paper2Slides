@@ -30,6 +30,7 @@ import matplotlib
 # Headless friendly
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib import font_manager  # noqa: E402
 
 # Ensure repo root is on sys.path so `import paper2slides` works when running as a script.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -230,7 +231,66 @@ def _choose_figsize(spec: ChartSpec) -> Tuple[float, float]:
     return w, h
 
 
-def _apply_minimal_style():
+def _try_setup_cjk_font(font: Optional[str] = None) -> Optional[str]:
+    """
+    Best-effort CJK font setup for matplotlib.
+    Returns chosen font family name if configured, else None.
+    """
+    # 1) User-specified font file path
+    if font:
+        p = Path(font).expanduser()
+        if p.exists() and p.is_file():
+            try:
+                font_manager.fontManager.addfont(str(p))
+                family = font_manager.FontProperties(fname=str(p)).get_name()
+                plt.rcParams["font.family"] = "sans-serif"
+                plt.rcParams["font.sans-serif"] = [family, "DejaVu Sans"]
+                return family
+            except Exception:
+                pass
+
+    # 2) Search common CJK fonts on the system
+    # Note: findSystemFonts is relatively fast; we keep a tight substring list.
+    wanted_substrings = [
+        "NotoSansCJK",
+        "Noto Sans CJK",
+        "SourceHanSans",
+        "Source Han Sans",
+        "WenQuanYi",
+        "wqy",
+        "SimHei",
+        "Microsoft YaHei",
+        "PingFang",
+        "Hiragino Sans GB",
+        "STHeiti",
+    ]
+    try:
+        fonts = font_manager.findSystemFonts(fontpaths=None, fontext="ttf") + font_manager.findSystemFonts(
+            fontpaths=None, fontext="ttc"
+        )
+    except Exception:
+        fonts = []
+    chosen_path: Optional[str] = None
+    for fp in fonts:
+        low = fp.lower()
+        if any(s.lower() in low for s in wanted_substrings):
+            chosen_path = fp
+            break
+    if chosen_path:
+        try:
+            font_manager.fontManager.addfont(chosen_path)
+            family = font_manager.FontProperties(fname=chosen_path).get_name()
+            plt.rcParams["font.family"] = "sans-serif"
+            plt.rcParams["font.sans-serif"] = [family, "DejaVu Sans"]
+            return family
+        except Exception:
+            return None
+
+    return None
+
+
+def _apply_minimal_style(font: Optional[str] = None):
+    chosen_family = _try_setup_cjk_font(font)
     plt.rcParams.update(
         {
             "figure.facecolor": "white",
@@ -246,8 +306,14 @@ def _apply_minimal_style():
             "font.size": 11,
             "axes.titlesize": 14,
             "axes.titleweight": "semibold",
+            # Avoid rendering '-' as a square on some CJK fonts
+            "axes.unicode_minus": False,
         }
     )
+    if chosen_family is None:
+        # Keep it quiet by default, but leave a hint for servers missing CJK fonts.
+        # (Most common fix on Ubuntu: apt-get install fonts-noto-cjk)
+        pass
 
 
 def _render_bar(ax: Any, spec: ChartSpec):
@@ -344,8 +410,8 @@ def _render_pie(ax: Any, spec: ChartSpec):
         ax.legend(wedges, labels, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False, fontsize=10)
 
 
-def render_chart(spec: ChartSpec, out_path: Union[str, Path]) -> Path:
-    _apply_minimal_style()
+def render_chart(spec: ChartSpec, out_path: Union[str, Path], *, font: Optional[str] = None) -> Path:
+    _apply_minimal_style(font)
     w, h = _choose_figsize(spec)
     fig, ax = plt.subplots(figsize=(w, h))
 
@@ -366,6 +432,10 @@ def render_chart(spec: ChartSpec, out_path: Union[str, Path]) -> Path:
 
     fig.tight_layout()
     out = Path(out_path)
+    # Important: if caller gives a relative path, resolve it under repo root
+    # to avoid writing to system root when cwd happens to be '/'.
+    if not out.is_absolute():
+        out = (_REPO_ROOT / out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=220, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -411,10 +481,11 @@ def main():
     ap = argparse.ArgumentParser(description="Generate a PPT-friendly chart image from text (+ optional style image).")
     ap.add_argument("--prompt", required=True, help="文字描述（必选），例如：画一个柱状图：A/B/C=10/20/15，标题为销量")
     ap.add_argument("--image", default=None, help="可选，参考图片路径（用于风格/配色）")
-    ap.add_argument("--out", default="chart.png", help="输出图片路径（png/jpg 等）")
+    ap.add_argument("--out", default="dev/_chart_out/chart.png", help="输出图片路径（png/jpg 等；相对路径默认相对于仓库根目录）")
     ap.add_argument("--model", default="", help="模型名（默认读 LLM_MODEL 或 gemini-3-pro）")
     ap.add_argument("--base-url", default=None, help="OpenAI 兼容 base_url（默认 http://127.0.0.1:51958/v1）")
     ap.add_argument("--api-key", default=None, help="可选 API key（多数情况下本地 gemini_proxy 不需要传入）")
+    ap.add_argument("--font", default=None, help="可选：中文字体文件路径（ttf/ttc），用于解决服务器缺少中文字体导致渲染失败")
     ap.add_argument("--print-spec", action="store_true", help="打印生成的 ChartSpec JSON")
     args = ap.parse_args()
 
@@ -427,7 +498,7 @@ def main():
     )
     if args.print_spec:
         print(json.dumps(spec.__dict__, ensure_ascii=False, indent=2))
-    out = render_chart(spec, args.out)
+    out = render_chart(spec, args.out, font=args.font)
     print(f"Saved chart to: {out}")
 
 
