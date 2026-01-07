@@ -17,6 +17,9 @@ python-dotenv>=1.0.0
 pyyaml>=6.0
 requests>=2.28.0
 
+# Chart rendering (dev prototype)
+matplotlib>=3.8.0
+
 
 # Web API Dependencies (api/)
 fastapi==0.122
