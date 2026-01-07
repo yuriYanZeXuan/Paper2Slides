@@ -54,6 +54,23 @@ def _load_ocr_text_map_from_ckpt(ckpt_path: str) -> dict[int, str]:
     return out
 
 
+def _load_block_type_map_from_ckpt(ckpt_path: str) -> dict[int, str]:
+    """从 MinerU grounding checkpoint 里读取 raw_blocks，并返回 {id: type}."""
+    with open(ckpt_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    raw_blocks = data.get("raw_blocks", []) or []
+    out: dict[int, str] = {}
+    for b in raw_blocks:
+        try:
+            bid = int(b.get("id"))
+        except Exception:
+            continue
+        t = str(b.get("type") or "").strip()
+        if t:
+            out[bid] = t
+    return out
+
+
 def _load_image_size_from_ckpt(ckpt_path: str) -> tuple[int, int] | None:
     """从 grounding checkpoint 读取 image_size (width/height)。"""
     with open(ckpt_path, "r", encoding="utf-8") as f:
@@ -168,8 +185,13 @@ def match_plan_text_with_ocr(
     plan_text_spans: List[Dict[str, Any]],
     *,
     max_candidates: int | None = None,
+    match_field: str = "text",
 ) -> tuple[str | None, Dict[str, Any]]:
-    """用 OCR 文本与 plan_text_spans 做字符串相似度匹配（不调用 VLM、不用 bbox crop）。"""
+    """用 OCR 文本与 plan_text_spans 做字符串相似度匹配（不调用 VLM、不用 bbox crop）。
+
+    Args:
+        match_field: 候选字符串字段，默认用 span["text"]；标题类可用 span["section_title"].
+    """
     if not ocr_text or not ocr_text.strip() or not plan_text_spans:
         return None, {"matched_index": None, "score": 0.0}
 
@@ -181,7 +203,7 @@ def match_plan_text_with_ocr(
     best_score = -1.0
     best_span: Dict[str, Any] | None = None
     for i, span in enumerate(candidates, start=1):
-        t = str(span.get("text") or "")
+        t = str(span.get(match_field) or "")
         s = _similarity(ocr_text, t)
         if s > best_score:
             best_score = s
@@ -190,13 +212,14 @@ def match_plan_text_with_ocr(
 
     matched_text = None
     if best_i is not None and best_span is not None:
-        matched_text = str(best_span.get("text") or "").strip() or None
+        matched_text = str(best_span.get(match_field) or "").strip() or None
 
     meta = {
         "matched_index": best_i,
         "score": float(best_score),
         "ocr_text": str(ocr_text),
         "matched_span": best_span,
+        "match_field": str(match_field),
     }
     return matched_text, meta
 
@@ -251,6 +274,7 @@ class PosterTextMatch(BaseTool):
 
         plan_text_spans = _load_plan_text_spans(plan_text_spans_path)
         ocr_map = _load_ocr_text_map_from_ckpt(ckpt_path)
+        type_map = _load_block_type_map_from_ckpt(ckpt_path)
         img_size = _load_image_size_from_ckpt(ckpt_path)
 
         region_ids = params.get("region_ids") or []
@@ -270,11 +294,24 @@ class PosterTextMatch(BaseTool):
         for i, rid in enumerate(region_ids):
             rid_i = int(rid)
             ocr_text = ocr_map.get(rid_i, "")
-            matched_text, meta = match_plan_text_with_ocr(
-                ocr_text=ocr_text,
-                plan_text_spans=plan_text_spans,
-                max_candidates=max_candidates_i,
-            )
+            block_type = str(type_map.get(rid_i, "") or "").strip().lower()
+            # MinerU: type=title 的 block，优先用 plan span 的 section_title 做匹配
+            if block_type == "title":
+                matched_text, meta = match_plan_text_with_ocr(
+                    ocr_text=ocr_text,
+                    plan_text_spans=plan_text_spans,
+                    max_candidates=max_candidates_i,
+                    match_field="section_title",
+                )
+            else:
+                matched_text, meta = match_plan_text_with_ocr(
+                    ocr_text=ocr_text,
+                    plan_text_spans=plan_text_spans,
+                    max_candidates=max_candidates_i,
+                    match_field="text",
+                )
+            # attach block type for debugging
+            meta = {**(meta or {}), "mineru_block_type": block_type}
 
             style_hint = None
             if bboxes and img_size is not None:
