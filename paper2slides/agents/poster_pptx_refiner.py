@@ -40,7 +40,7 @@ from paper2slides.utils.agent_artifact_logging import (
 # Import tools
 from paper2slides.agents.tools.image_content_grounding import ground_poster_text_regions_with_mineru_vlm
 from paper2slides.agents.tools.zimage_inpaint import inpaint_text_regions
-from paper2slides.agents.tools.poster_text_match import match_plan_text_for_patch, _load_plan_text_spans
+from paper2slides.agents.tools.poster_text_match import match_plan_text_with_ocr, _load_plan_text_spans
 from paper2slides.agents.tools.pptx_renderer import render_layout_to_pptx, PPTXRenderer
 
 logger = get_logger(__name__)
@@ -365,16 +365,10 @@ class PosterPPTXRefiner:
         plan_text_spans = _load_plan_text_spans(self.plan_text_spans_path)
         
         for i, region in enumerate(valid_regions):
-            # 裁剪区域
-            patch = image.crop(region.bbox)
-            
-            # 匹配文字
-            matched_text, meta = match_plan_text_for_patch(
-                patch=patch,
-                bbox=region.bbox,
+            # 匹配文字（纯文本相似度；不再依赖 patch 图像）
+            matched_text, meta = match_plan_text_with_ocr(
+                ocr_text=region.text_content,
                 plan_text_spans=plan_text_spans,
-                hint_text=region.text_content,
-                agent_name=_AGENT_NAME,
             )
             
             # 如果没有匹配到，使用 OCR 结果

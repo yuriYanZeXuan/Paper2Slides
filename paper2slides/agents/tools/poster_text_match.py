@@ -1,24 +1,17 @@
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 import re
 import difflib
 
 from qwen_agent.tools.base import BaseTool, register_tool
-from paper2slides.agents.tools.config_loader import get_text_match_config
-from paper2slides.utils.agent_artifact_logging import save_json_log
 
 
 BBox = Tuple[int, int, int, int]
 
 _PLAN_SPANS_CACHE: dict[str, tuple[float, List[Dict[str, Any]]]] = {}
 
-
-def _get_default_max_candidates() -> int:
-    """获取默认最大候选数量。"""
-    cfg = get_text_match_config()
-    return int(cfg.get("max_candidates", 40))
+_DEFAULT_MAX_CANDIDATES = 40
 
 
 def _load_plan_text_spans(plan_text_spans_path: str) -> List[Dict[str, Any]]:
@@ -180,7 +173,7 @@ def match_plan_text_with_ocr(
         return None, {"matched_index": None, "score": 0.0}
 
     if max_candidates is None:
-        max_candidates = _get_default_max_candidates()
+        max_candidates = _DEFAULT_MAX_CANDIDATES
     candidates = plan_text_spans[: max(1, int(max_candidates))]
 
     best_i: int | None = None
@@ -207,50 +200,9 @@ def match_plan_text_with_ocr(
     return matched_text, meta
 
 
-# ========= Backward-compat wrapper (no image/VLM) =========
-def match_plan_text_for_patch(
-    patch: Any,  # kept for compatibility; not used
-    bbox: BBox,  # kept for compatibility; only used for logging meta
-    plan_text_spans: List[Dict[str, Any]],
-    *,
-    max_candidates: int | None = None,
-    model: str | None = None,  # kept for compatibility; not used
-    hint_text: str | None = None,
-    agent_name: str = "poster_refiner",
-    log_root: str | None = None,
-) -> tuple[str | None, Dict[str, Any] | None]:
-    """兼容旧接口：不再使用 patch 图像或 VLM，只用 hint_text(OCR) 与 plan spans 做匹配。
-
-    旧代码（如 poster_pptx_refiner）会传 patch/bbox/hint_text。这里保留签名以避免 ImportError，
-    并将匹配逻辑退化为纯文本相似度匹配。
-    """
-    _ = patch
-    _ = model
-
-    matched_text, meta = match_plan_text_with_ocr(
-        ocr_text=str(hint_text or ""),
-        plan_text_spans=plan_text_spans,
-        max_candidates=max_candidates,
-    )
-    meta = {**(meta or {}), "bbox": [int(v) for v in bbox]}
-    if log_root:
-        save_json_log(
-            agent_name=agent_name,
-            func_name="match_text_with_ocr",
-            payload=meta,
-            log_root=log_root,
-        )
-    return matched_text, meta
-
-
 @register_tool("poster_text_match")
 class PosterTextMatch(BaseTool):
-    """将 patch 里的文字匹配到 plan_text_spans（通过路径加载）。
-
-    方案 B：
-    - 调用方只传 plan_text_spans_path（避免把大候选塞进 tool 参数由 LLM 搬运）
-    - tool 内部读取 spans，再调用 VLM 做匹配
-    """
+    """仅支持 Batch 模式：一次性匹配多个 region_id 的 OCR 文本到 plan_text_spans。"""
 
     description = "Match the text in a poster patch to plan text spans (loaded from a JSON file)."
     parameters = {
@@ -264,10 +216,6 @@ class PosterTextMatch(BaseTool):
                 "type": "string",
                 "description": "Path to the MinerU grounding checkpoint JSON file (returned by poster_text_grounding).",
             },
-            "region_id": {
-                "type": "integer",
-                "description": "(Single) The 'id' of the text region from grounding results.",
-            },
             "region_ids": {
                 "type": "array",
                 "items": {"type": "integer"},
@@ -276,14 +224,14 @@ class PosterTextMatch(BaseTool):
             "bboxes": {
                 "type": "array",
                 "items": {"type": "array", "items": {"type": "integer"}},
-                "description": "Optional. Only used for echoing back to caller; matching does NOT use bbox crops.",
+                "description": "Optional. Pixel bboxes aligned with region_ids. Used only for style_hint estimation.",
             },
-            "log_root": {
-                "type": "string",
-                "description": "Optional log root path for logging.",
+            "max_candidates": {
+                "type": "integer",
+                "description": "Optional. Only consider the first N plan_text_spans as candidates (default 40).",
             },
         },
-        "required": ["plan_text_spans_path", "grounding_ckpt_path"],
+        "required": ["plan_text_spans_path", "grounding_ckpt_path", "region_ids"],
     }
 
     def call(self, params, **kwargs) -> str:
@@ -296,64 +244,48 @@ class PosterTextMatch(BaseTool):
         ocr_map = _load_ocr_text_map_from_ckpt(ckpt_path)
         img_size = _load_image_size_from_ckpt(ckpt_path)
 
-        agent_name = str(params.get("agent_name") or "poster_refiner")
-        log_root = params.get("log_root")
+        region_ids = params.get("region_ids") or []
+        assert isinstance(region_ids, list) and len(region_ids) > 0, "region_ids must be a non-empty list"
 
-        # Batch mode (preferred)
-        if params.get("region_ids") is not None:
-            region_ids = params.get("region_ids") or []
-            assert isinstance(region_ids, list) and len(region_ids) > 0, "region_ids must be a non-empty list"
-            bboxes = params.get("bboxes") or []
-            if bboxes:
-                assert isinstance(bboxes, list) and len(bboxes) == len(region_ids), "bboxes length must match region_ids length"
+        bboxes = params.get("bboxes") or []
+        if bboxes:
+            assert isinstance(bboxes, list) and len(bboxes) == len(region_ids), "bboxes length must match region_ids length"
 
-            results: List[Dict[str, Any]] = []
-            for i, rid in enumerate(region_ids):
-                rid_i = int(rid)
-                ocr_text = ocr_map.get(rid_i, "")
-                matched_text, meta = match_plan_text_with_ocr(ocr_text, plan_text_spans)
-                # 估算字体大小/行高（需要 caller 传 bboxes，同时 ckpt 里有 image_size）
-                style_hint = None
-                if bboxes and img_size is not None:
-                    bbox_i = tuple(map(int, bboxes[i]))
-                    iw, ih = img_size
-                    style_hint = estimate_pptx_font_style_from_bbox(
-                        ocr_text=ocr_text,
-                        bbox=bbox_i,  # type: ignore[arg-type]
-                        image_w=iw,
-                        image_h=ih,
-                    )
-                if log_root:
-                    save_json_log(
-                        agent_name=agent_name,
-                        func_name="match_text_with_ocr",
-                        payload={"region_id": rid_i, "meta": meta, "style_hint": style_hint},
-                        log_root=log_root,
-                        suffix=f"rid_{rid_i}",
-                    )
-                results.append(
-                    {
-                        "region_id": rid_i,
-                        "bbox": bboxes[i] if bboxes else None,
-                        "matched_text": matched_text,
-                        "meta": meta,
-                        "style_hint": style_hint,
-                    }
-                )
-            return json.dumps({"results": results}, ensure_ascii=False)
+        max_candidates = params.get("max_candidates", None)
+        try:
+            max_candidates_i = int(max_candidates) if max_candidates is not None else None
+        except Exception:
+            max_candidates_i = None
 
-        # Single mode
-        rid = params.get("region_id")
-        assert rid is not None, "either region_ids or region_id must be provided"
-        rid_i = int(rid)
-        ocr_text = ocr_map.get(rid_i, "")
-        matched_text, meta = match_plan_text_with_ocr(ocr_text, plan_text_spans)
-        if log_root:
-            save_json_log(
-                agent_name=agent_name,
-                func_name="match_text_with_ocr",
-                payload={"region_id": rid_i, "meta": meta},
-                log_root=log_root,
-                suffix=f"rid_{rid_i}",
+        results: List[Dict[str, Any]] = []
+        for i, rid in enumerate(region_ids):
+            rid_i = int(rid)
+            ocr_text = ocr_map.get(rid_i, "")
+            matched_text, meta = match_plan_text_with_ocr(
+                ocr_text=ocr_text,
+                plan_text_spans=plan_text_spans,
+                max_candidates=max_candidates_i,
             )
-        return json.dumps({"matched_text": matched_text, "meta": meta}, ensure_ascii=False)
+
+            style_hint = None
+            if bboxes and img_size is not None:
+                bbox_i = tuple(map(int, bboxes[i]))
+                iw, ih = img_size
+                style_hint = estimate_pptx_font_style_from_bbox(
+                    ocr_text=ocr_text,
+                    bbox=bbox_i,  # type: ignore[arg-type]
+                    image_w=iw,
+                    image_h=ih,
+                )
+
+            results.append(
+                {
+                    "region_id": rid_i,
+                    "bbox": bboxes[i] if bboxes else None,
+                    "matched_text": matched_text,
+                    "meta": meta,
+                    "style_hint": style_hint,
+                }
+            )
+
+        return json.dumps({"results": results}, ensure_ascii=False)
