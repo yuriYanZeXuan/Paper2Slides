@@ -5,6 +5,7 @@ import re
 import difflib
 
 from qwen_agent.tools.base import BaseTool, register_tool
+from paper2slides.utils.agent_artifact_logging import save_json_log
 
 
 BBox = Tuple[int, int, int, int]
@@ -230,6 +231,14 @@ class PosterTextMatch(BaseTool):
                 "type": "integer",
                 "description": "Optional. Only consider the first N plan_text_spans as candidates (default 40).",
             },
+            "agent_name": {
+                "type": "string",
+                "description": "Optional agent name for logging (default: poster_refiner).",
+            },
+            "log_root": {
+                "type": "string",
+                "description": "Optional log root directory for writing debug logs. If omitted, uses outputs/agent_logs/<current_run>/<agent_name>/.",
+            },
         },
         "required": ["plan_text_spans_path", "grounding_ckpt_path", "region_ids"],
     }
@@ -288,4 +297,25 @@ class PosterTextMatch(BaseTool):
                 }
             )
 
-        return json.dumps({"results": results}, ensure_ascii=False)
+        final = {"results": results}
+
+        # Debug logging (single JSON per call; no per-region spam)
+        agent_name = str(params.get("agent_name") or "poster_refiner")
+        log_root_param = params.get("log_root")
+        log_root_path = Path(str(log_root_param)) if log_root_param else None
+        save_json_log(
+            agent_name=agent_name,
+            func_name="poster_text_match",
+            payload={
+                "plan_text_spans_path": plan_text_spans_path,
+                "grounding_ckpt_path": ckpt_path,
+                "image_size": {"width": img_size[0], "height": img_size[1]} if img_size else None,
+                "max_candidates": max_candidates_i,
+                "region_ids": region_ids,
+                "bboxes": bboxes if bboxes else None,
+                "results": results,
+            },
+            log_root=log_root_path,
+        )
+
+        return json.dumps(final, ensure_ascii=False)
