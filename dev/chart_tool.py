@@ -20,9 +20,10 @@ import json
 import math
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Literal
 
 import matplotlib
 
@@ -30,10 +31,15 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
+# Ensure repo root is on sys.path so `import paper2slides` works when running as a script.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if (_REPO_ROOT / "paper2slides").exists() and str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from paper2slides.utils.api_utils import get_openai_client  # noqa: E402
 
 
-ChartType = Union["bar", "line", "pie"]
+ChartType = Literal["bar", "line", "pie"]
 
 
 @dataclass
