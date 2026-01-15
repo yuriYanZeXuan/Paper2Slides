@@ -47,6 +47,11 @@ def get_text_match_config() -> dict[str, Any]:
     return get_config().get("text_match", {})
 
 
+def get_glm_image_config() -> dict[str, Any]:
+    """获取 glm_image 配置节。"""
+    return get_config().get("glm_image", {})
+
+
 def reload_config() -> dict:
     """强制重新加载配置。"""
     _CONFIG_CACHE.clear()

@@ -96,14 +96,15 @@ class ImageGenerator:
         """
         Args:
             backend: 'gemini' 使用远程 Gemini/OpenAI 网关（默认），
-                     'zimage' 使用本地 Z-Image 模型（diffusers）。
+                     'zimage' 使用本地 Z-Image 模型（diffusers），
+                     'glm_image' 使用本地 GLM-Image 模型（diffusers）。
             local_model: 本地 Z-Image 模型的 repo id 或路径，默认 `Tongyi-MAI/Z-Image-Turbo`。
         """
         from ..utils.api_utils import load_env_api_key, get_openai_client
         
         # 后端选择
         self.backend = backend
-        assert self.backend in ["gemini", "zimage", "qwen"]
+        assert self.backend in ["gemini", "zimage", "qwen", "glm_image"]
         self.local_model = local_model
         self.local_device = device
         self._local_pipe = None  # 延迟加载 Z-ImagePipeline
@@ -376,6 +377,8 @@ class ImageGenerator:
             return self._call_zimage_local(prompt, reference_images)
         if backend == "qwen":
             return self._call_qwen_local(prompt, reference_images)
+        if backend == "glm_image":
+            return self._call_glm_local(prompt, reference_images)
         # Check if we should use native Gemini API (based on model name or config)
         if "gemini" in self.model.lower() and "preview" in self.model.lower():
             return self._call_gemini_native(prompt, reference_images)
@@ -512,6 +515,47 @@ class ImageGenerator:
             generator=generator,
         ).images[0]
         print(f"qwen image generation: {prompt + positive_magic} done")
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue(), "image/png"
+
+    def _get_glm_pipeline(self):
+        """Lazy-load GLM-Image pipeline 模型。"""
+        if self._local_pipe is not None:
+            return self._local_pipe
+        try:
+            from diffusers.pipelines.glm_image import GlmImagePipeline
+        except Exception as e:
+            raise RuntimeError(f"Failed to import GLM-Image dependencies (diffusers): {e}")
+
+        torch_dtype = torch.bfloat16 if self.local_device == "cuda" else torch.float32
+        pipe = GlmImagePipeline.from_pretrained(self.local_model, torch_dtype=torch_dtype, device_map=self.local_device)
+        self._local_pipe = pipe
+        return self._local_pipe
+
+    def _call_glm_local(self, prompt: str, reference_images: List[dict]) -> tuple:
+        """
+        使用本地 GLM-Image 生成图片，返回 (bytes, mime_type)。
+        当前忽略 reference_images，仅基于文本 prompt 生成。
+        """
+        pipe = self._get_glm_pipeline()
+
+        height = int(os.getenv("LOCAL_IMAGE_HEIGHT", 1024))
+        width = int(os.getenv("LOCAL_IMAGE_WIDTH", 768))
+        height = max(32, (height // 32) * 32)
+        width = max(32, (width // 32) * 32)
+
+        generator = torch.Generator(device=self.local_device).manual_seed(42)
+        print(f"glm_image generation: {prompt}")
+        image = pipe(
+            prompt=prompt,
+            height=height,
+            width=width,
+            num_inference_steps=50,
+            guidance_scale=1.5,
+            generator=generator,
+        ).images[0]
+        print(f"glm_image generation: {prompt} done")
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue(), "image/png"

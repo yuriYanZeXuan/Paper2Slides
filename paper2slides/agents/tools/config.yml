@@ -38,6 +38,26 @@ text_match:
   # 匹配模型（留空则使用环境变量 POSTER_TEXT_MATCH_MODEL 或默认 gemini-3-pro）
   model: ""
 
+# GLM-Image patch edit 配置
+glm_image:
+  # 最长边的最大分辨率（保持长宽比缩放）
+  max_resolution: 1024
+  
+  # 推理步数
+  num_inference_steps: 50
+  
+  # guidance_scale
+  guidance_scale: 1.5
+  
+  # 随机种子
+  seed: 42
+  
+  # 默认模型名称（可用环境变量 LOCAL_GLM_IMAGE_MODEL 覆盖）
+  model_name: "THUDM/GLM-Image-1.0"
+  
+  # 默认设备（留空则自动检测 cuda/cpu）
+  device: ""
+
 # Qwen-Image-Edit 擦除工具配置
 qwen_edit:
   # 最长边的最大分辨率（保持长宽比缩放）
