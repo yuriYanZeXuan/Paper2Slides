@@ -4,7 +4,7 @@
 export LOCAL_IMAGE_HEIGHT=1024
 export LOCAL_IMAGE_WIDTH=768
 
-LOCAL_GLM_IMAGE_MODEL="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/GLM-Image"
+LOCAL_GLM_IMAGE_MODEL="//mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/glm_image"
 
 python -m paper2slides.agents.GLMimage_pipeline_agent \
   --input /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/postergenparserunit/examples/tusen_1210.md \
