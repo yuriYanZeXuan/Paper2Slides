@@ -117,14 +117,11 @@ class ContentPlanner:
         base_url: str = None,
         model: str = "gpt-4o",
     ):
-        import os
-        from ..utils.api_utils import load_env_api_key, get_api_base_url, get_openai_client
-        
-        self.api_key = api_key or load_env_api_key()
-        self.base_url = base_url or get_api_base_url()
+        from ..utils.api_utils import get_openai_client
+
         self.model = model
-        
-        self.client = get_openai_client(api_key=self.api_key, base_url=self.base_url)
+        # LLM 使用本地 gemini_proxy，不加载 env；显式传入的 api_key/base_url 会透传
+        self.client = get_openai_client(api_key=api_key, base_url=base_url)
     
     def plan(self, gen_input: GenerationInput) -> ContentPlan:
         """Create a content plan from generation input."""

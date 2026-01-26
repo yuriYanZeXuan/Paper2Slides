@@ -58,7 +58,7 @@ async def run_plan_stage(base_dir: Path, config_dir: Path, config: Dict) -> Dict
     
     logger.info("Planning content...")
     
-    # ContentPlanner loads API key/base_url via paper2slides.utils.api_utils
+    # ContentPlanner 使用 get_openai_client，走本地 gemini_proxy，不依赖 env
     planner = ContentPlanner(model="gpt-4o")
     plan = planner.plan(gen_input)
     

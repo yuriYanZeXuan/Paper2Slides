@@ -1,8 +1,10 @@
 """
 API Utilities for Paper2Slides
 
-Provides unified API key loading and client configuration compatible with
-PosterGen2 environment settings (GEMINI_TEXT_KEY, RUNWAY_API_KEY, etc.)
+LLM (text): 使用本地 gemini_proxy 提供的 OpenAI 兼容接口 (PosterGen3/gemini_proxy.py)，
+不再从环境变量加载 API key。
+
+Image: 仍支持通过 load_env_api_key(key_type="image") / get_api_base_url(key_type="image") 配置。
 """
 
 import os
@@ -15,6 +17,11 @@ from typing import Optional, Any, Dict, List, Union
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# 本地 gemini_proxy 默认地址 (PosterGen3/gemini_proxy.py 默认端口 51958)
+# 可通过环境变量 P2S_LLM_PROXY_URL 覆盖，例如不同主机/端口
+DEFAULT_LLM_PROXY_URL = "http://localhost:51958/v1"
+
 
 def load_env_api_key(key_type: str = "text") -> str:
     """
@@ -176,28 +183,36 @@ class CustomHTTPClient:
                 raise
 
 def get_openai_client(
-    api_key: Optional[str] = None, 
+    api_key: Optional[str] = None,
     base_url: Optional[str] = None,
-    key_type: str = "text"
+    key_type: str = "text",
 ):
     """
-    Get configured OpenAI client.
-    Args:
-        key_type: "text" (default) or "image" to select appropriate env vars if api_key not provided.
-    """
-    final_api_key = api_key or load_env_api_key(key_type)
-    final_base_url = base_url or get_api_base_url(key_type)
-    
-    if not final_api_key:
-        raise ValueError(f"No API key found for {key_type}")
+    获取 OpenAI 兼容客户端。
 
-    use_custom_http = False
-    if final_base_url and ("runway" in final_base_url or "nano" in final_base_url or "devops" in final_base_url):
-        use_custom_http = True
-            
-    if use_custom_http:
-        logger.info(f"Using CustomHTTPClient for {key_type} (URL: {final_base_url})")
-        return CustomHTTPClient(api_key=final_api_key, base_url=final_base_url)
-    
+    - key_type="text" (默认, LLM): 使用本地 gemini_proxy 接口 (PosterGen3/gemini_proxy.py)，
+      base_url 默认为 P2S_LLM_PROXY_URL 或 http://localhost:51958/v1，不从环境变量加载 API key；
+      proxy 端用请求头或自带的 default_api_key。显式传入 api_key/base_url 时会被采用。
+    - key_type="image": 仍从 load_env_api_key/get_api_base_url 读取配置（未传入时）。
+    """
     from openai import OpenAI
+
+    if key_type == "image":
+        final_api_key = api_key or load_env_api_key(key_type)
+        final_base_url = base_url or get_api_base_url(key_type)
+        if not final_api_key:
+            raise ValueError("No API key found for image (set IMAGE_GEN_API_KEY, GEMINI_IMAGE_API_KEY, etc.)")
+        use_custom_http = bool(
+            final_base_url
+            and any(x in final_base_url for x in ("runway", "nano", "devops"))
+        )
+        if use_custom_http:
+            logger.info(f"Using CustomHTTPClient for image (URL: {final_base_url})")
+            return CustomHTTPClient(api_key=final_api_key, base_url=final_base_url)
+        return OpenAI(api_key=final_api_key, base_url=final_base_url)
+
+    # LLM (text): 使用本地 gemini_proxy，不从 env 加载 key
+    final_base_url = base_url or os.getenv("P2S_LLM_PROXY_URL", DEFAULT_LLM_PROXY_URL)
+    final_api_key = api_key if api_key is not None else ""
+    logger.info(f"Using LLM proxy for text (URL: {final_base_url})")
     return OpenAI(api_key=final_api_key, base_url=final_base_url)
