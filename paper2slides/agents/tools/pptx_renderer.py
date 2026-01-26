@@ -281,7 +281,7 @@ class PPTXRenderer:
         )
         tf = textbox.text_frame
         tf.word_wrap = True  # 始终开启自动换行
-        tf.auto_size = MSO_AUTO_SIZE.NONE  # 不自动缩放，让文字按我们算的字号渲染
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE  # 不自动缩放，让文字按我们算的字号渲染
 
         # 减小内边距
         try:

@@ -37,11 +37,36 @@ def _get_mineru_client() -> "MinerUClient":
         use_fast=True
     )
     
-    client = MinerUClient(
-        backend="transformers",
-        model=model,
-        processor=processor
-    )
+    # 更简单的兼容：mineru_vl_utils 强依赖 model.config.max_position_embeddings，
+    # 但部分 transformers 版本的 Qwen2VLConfig 不包含该字段。
+    try:
+        client = MinerUClient(
+            backend="transformers",
+            model=model,
+            processor=processor
+        )
+    except AttributeError as e:
+        if "max_position_embeddings" not in str(e):
+            raise
+        # 优先用 tokenizer 的 model_max_length，否则用一个保守默认值
+        tok = getattr(processor, "tokenizer", None)
+        mml = getattr(tok, "model_max_length", None)
+        if not isinstance(mml, int) or mml <= 0 or mml > 1_000_000:
+            mml = 16384
+        try:
+            setattr(model.config, "max_position_embeddings", int(mml))
+            log_agent_warning(
+                "poster_text_grounding",
+                f"mineru compat: inject model.config.max_position_embeddings={int(mml)} and retry",
+            )
+        except Exception:
+            # 如果注入失败，让原始异常暴露出来更好定位
+            raise e
+        client = MinerUClient(
+            backend="transformers",
+            model=model,
+            processor=processor
+        )
     _MINERU_CLIENT = client
     return client
 
